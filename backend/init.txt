@@ -1,0 +1,34 @@
+(full) PS E:\Project\Smile-Chat> & E:/project/full/Scripts/python.exe e:/Project/Smile-Chat/backend/init_project.py
+=== Smile-Chat 项目初始化 ===
+
+1. 初始化数据库...
+✓ 数据库初始化完成
+
+2. 创建管理员邀请码...
+   ✓ 管理员邀请码: smile-admin-iJdFHWWHxX0
+
+3. 创建5个普通用户邀请码...
+   1. smile-user-lfNTXdNkSnTiVGTz
+   2. smile-user-teYs8pkZufUl3lAO
+   3. smile-user-5AdAwLWT4pgzpYno
+   4. smile-user-oLir1xCScnrg_uke
+   5. smile-user-ugykdAfMlIXEtAcJ
+
+4. 创建配置文件...
+   ✓ API配置文件: e:\Project\Smile-Chat\backend\config\api_channels.json
+
+5. 创建必要的目录...
+   ✓ e:\Project\Smile-Chat\backend\uploads\avatars
+   ✓ e:\Project\Smile-Chat\backend\uploads\latest
+   ✓ e:\Project\Smile-Chat\memory\本体
+
+==================================================
+✅ 初始化完成！
+
+下一步操作：
+1. 编辑 backend/config/api_channels.json 填写你的API密钥
+2. 运行 'python main.py' 启动后端服务器
+3. 使用管理员邀请码注册第一个账号: smile-admin-iJdFHWWHxX0
+4. 第一个注册的用户(ID=1)将自动成为管理员
+
+==================================================

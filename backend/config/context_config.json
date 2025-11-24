@@ -1,0 +1,6 @@
+{
+  "max_messages": 20,
+  "max_tokens": 4000,
+  "system_prompt_tokens": 100,
+  "reserve_tokens": 1000
+}
