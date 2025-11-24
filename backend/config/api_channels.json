@@ -1,0 +1,20 @@
+{
+  "primary": {
+    "name": "OpenAI",
+    "base_url": "https://api.example.com/v1",
+    "api_key": "***REMOVED_API_KEY***",
+    "model": "load-gpt-4.1-mini",
+    "price": "$0.002/1K tokens"
+  },
+  "backup": [
+    {
+      "name": "Azure OpenAI",
+      "base_url": "https://your-resource.openai.azure.com",
+      "api_key": "your-azure-api-key-here",
+      "model": "gpt-35-turbo",
+      "price": "$0.002/1K tokens"
+    }
+  ],
+  "system_prompt": "你是启明，一个友好、智能的AI聊天助手。请用简洁、温暖的语气回复用户。你善于倾听，理解用户的需求，并提供有帮助的建议。",
+  "enable_search": true
+}

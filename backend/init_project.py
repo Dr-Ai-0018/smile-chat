@@ -1,0 +1,104 @@
+"""
+项目初始化脚本
+快速设置数据库和创建初始管理员邀请码
+"""
+import sqlite3
+import secrets
+from pathlib import Path
+
+def init_project():
+    print("=== Smile-Chat 项目初始化 ===\n")
+    
+    # 1. 初始化数据库
+    print("1. 初始化数据库...")
+    from database import init_db
+    init_db()
+    
+    # 2. 创建管理员邀请码
+    print("\n2. 创建管理员邀请码...")
+    admin_code = "smile-admin-" + secrets.token_urlsafe(8)
+    
+    db_path = Path(__file__).parent / "data" / "smile_chat.db"
+    conn = sqlite3.connect(str(db_path), check_same_thread=False)
+    cursor = conn.cursor()
+    
+    cursor.execute("INSERT INTO invites (code) VALUES (?)", (admin_code,))
+    conn.commit()
+    conn.close()
+    
+    print(f"   ✓ 管理员邀请码: {admin_code}")
+    
+    # 3. 创建额外的普通用户邀请码
+    print("\n3. 创建5个普通用户邀请码...")
+    conn = sqlite3.connect(str(db_path), check_same_thread=False)
+    cursor = conn.cursor()
+    
+    user_codes = []
+    for i in range(5):
+        code = "smile-user-" + secrets.token_urlsafe(12)
+        cursor.execute("INSERT INTO invites (code) VALUES (?)", (code,))
+        user_codes.append(code)
+    
+    conn.commit()
+    conn.close()
+    
+    for i, code in enumerate(user_codes, 1):
+        print(f"   {i}. {code}")
+    
+    # 4. 创建配置文件
+    print("\n4. 创建配置文件...")
+    config_dir = Path(__file__).parent / "config"
+    config_dir.mkdir(exist_ok=True)
+    
+    import json
+    
+    api_config = {
+        "primary": {
+            "name": "OpenAI",
+            "base_url": "https://api.openai.com/v1",
+            "api_key": "your-openai-api-key-here",
+            "model": "gpt-3.5-turbo",
+            "price": "$0.002/1K tokens"
+        },
+        "backup": [
+            {
+                "name": "Azure OpenAI",
+                "base_url": "https://your-resource.openai.azure.com",
+                "api_key": "your-azure-api-key-here",
+                "model": "gpt-35-turbo",
+                "price": "$0.002/1K tokens"
+            }
+        ],
+        "system_prompt": "你是启明，一个友好、智能的AI聊天助手。请用简洁、温暖的语气回复用户。你善于倾听，理解用户的需求，并提供有帮助的建议。",
+        "enable_search": True
+    }
+    
+    config_file = config_dir / "api_channels.json"
+    with open(config_file, "w", encoding="utf-8") as f:
+        json.dump(api_config, f, ensure_ascii=False, indent=2)
+    
+    print(f"   ✓ API配置文件: {config_file}")
+    
+    # 5. 创建必要的目录
+    print("\n5. 创建必要的目录...")
+    dirs = [
+        Path(__file__).parent / "uploads" / "avatars",
+        Path(__file__).parent / "uploads" / "latest",
+        Path(__file__).parent.parent / "memory" / "本体",
+    ]
+    
+    for dir_path in dirs:
+        dir_path.mkdir(parents=True, exist_ok=True)
+        print(f"   ✓ {dir_path}")
+    
+    print("\n" + "="*50)
+    print("✅ 初始化完成！")
+    print("\n下一步操作：")
+    print("1. 编辑 backend/config/api_channels.json 填写你的API密钥")
+    print("2. 运行 'python main.py' 启动后端服务器")
+    print(f"3. 使用管理员邀请码注册第一个账号: {admin_code}")
+    print("4. 第一个注册的用户(ID=1)将自动成为管理员")
+    print("\n" + "="*50)
+
+if __name__ == "__main__":
+    init_project()
