@@ -55,10 +55,18 @@ def init_db():
             user_id INTEGER NOT NULL,
             role TEXT NOT NULL,
             content TEXT NOT NULL,
+            image TEXT,
             timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (user_id) REFERENCES users(id)
         )
     """)
+    
+    # 检查并添加image列（用于升级旧数据库）
+    cursor.execute("PRAGMA table_info(chat_history)")
+    columns = [col[1] for col in cursor.fetchall()]
+    if 'image' not in columns:
+        cursor.execute("ALTER TABLE chat_history ADD COLUMN image TEXT")
+        print("✓ 已添加image列到chat_history表")
     
     conn.commit()
     conn.close()

@@ -8,6 +8,9 @@ from datetime import datetime
 
 from routers.user import get_current_user
 from models.schemas import MemoryUpdate
+from services.ai_service import AIService
+
+ai_service = AIService()
 
 router = APIRouter()
 
@@ -121,5 +124,8 @@ async def compress_memory(
     if current_user != user_id:
         raise HTTPException(status_code=403, detail="无权操作")
     
-    # TODO: 实现AI压缩逻辑
-    return {"message": "记忆压缩功能开发中"}
+    try:
+        result = await ai_service.compress_memory(user_id)
+        return {"message": "记忆压缩成功", "summary": result}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"记忆压缩失败: {str(e)}")

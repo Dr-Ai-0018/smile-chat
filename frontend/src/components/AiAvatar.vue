@@ -1,7 +1,7 @@
 <template>
   <svg class="ai-avatar" :width="size" :height="size" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
     <g transform="rotate(-15 50 50)">
-      <!-- 黄色圆形背景 - 无边框 -->
+      <!-- 黄色圆形背景 -->
       <circle cx="50" cy="50" r="48" fill="#FDD152"/>
       
       <!-- 笑脸眼睛 -->
