@@ -1,10 +1,22 @@
 <script setup>
 import { RouterView } from 'vue-router'
+import { onMounted, ref } from 'vue'
+import Toast from './components/Toast.vue'
+import { setToastInstance } from './utils/toast'
+
+const toastRef = ref(null)
+
+onMounted(() => {
+  if (toastRef.value) {
+    setToastInstance(toastRef.value)
+  }
+})
 </script>
 
 <template>
   <div id="app">
     <RouterView />
+    <Toast ref="toastRef" />
   </div>
 </template>
 

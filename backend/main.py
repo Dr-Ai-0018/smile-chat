@@ -4,8 +4,10 @@ FastAPI + JWT认证 + SQLite数据库
 """
 from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from contextlib import asynccontextmanager
+from pathlib import Path
 import uvicorn
 
 from routers import auth, chat, user, memory, admin, image, config
@@ -42,6 +44,13 @@ app.include_router(memory.router, prefix="/api/memory", tags=["记忆"])
 app.include_router(admin.router, prefix="/api/admin", tags=["管理"])
 app.include_router(image.router, prefix="/api/image", tags=["图片"])
 app.include_router(config.router, prefix="/api/config", tags=["配置"])
+
+# 静态文件服务 - 头像和图片上传
+UPLOADS_DIR = Path(__file__).parent / "uploads"
+UPLOADS_DIR.mkdir(exist_ok=True)
+(UPLOADS_DIR / "avatars").mkdir(exist_ok=True)
+(UPLOADS_DIR / "latest").mkdir(exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=str(UPLOADS_DIR)), name="uploads")
 
 @app.get("/")
 async def root():

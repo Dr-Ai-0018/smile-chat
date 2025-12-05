@@ -21,10 +21,14 @@
         <button @click="showMenu = false" class="close-btn">×</button>
       </div>
       <nav class="sidebar-nav">
-        <a href="#" @click="showAbout">ℹ️ 关于启明</a>
-        <a href="#" @click="logout">🚪 退出登录</a>
+        <a href="#" @click.prevent="showAbout">ℹ️ 关于启明</a>
+        <a href="#" @click.prevent="goToSettings">⚙️ 个人设置</a>
+        <a href="#" @click.prevent="logout">🚪 退出登录</a>
       </nav>
     </div>
+    
+    <!-- 侧边栏遮罩 -->
+    <div v-if="showMenu" class="sidebar-overlay" @click="showMenu = false"></div>
 
     <!-- 聊天消息区域 -->
     <div class="chat-messages" ref="messagesContainer">
@@ -34,7 +38,7 @@
         <p class="intro">我是启明，你有什么想和我聊的吗？</p>
       </div>
 
-      <div v-for="(msg, index) in messages" :key="index" class="message-group">
+      <div v-for="(msg, index) in messages" :key="msg.id || index" class="message-group">
         <!-- 时间戳 -->
         <div v-if="shouldShowTimestamp(index)" class="timestamp">
           {{ formatTimestamp(msg.timestamp) }}
@@ -42,23 +46,41 @@
 
         <!-- 消息 -->
         <div class="message" :class="msg.role">
-          <AiAvatar v-if="msg.role === 'assistant'" :size="40" />
-          <div class="message-content-wrapper" :class="msg.role">
-            <MessageDecoration 
-              :type="msg.role === 'assistant' ? 'ai' : 'user'" 
-              :size="30" 
-              class="bubble-decoration"
-            />
-            <div class="message-content" :class="msg.role">
-              <div v-html="renderMarkdown(msg.content)"></div>
+          <!-- AI消息：头像在左 -->
+          <template v-if="msg.role === 'assistant'">
+            <AiAvatar :size="40" />
+            <div class="message-body">
+              <div v-if="msg.content" class="message-content-wrapper assistant">
+                <MessageDecoration type="ai" :size="30" class="bubble-decoration" />
+                <div class="message-content assistant">
+                  <div v-html="renderMarkdown(msg.content)"></div>
+                </div>
+              </div>
             </div>
-          </div>
-          <UserAvatar v-if="msg.role === 'user'" :size="40" />
+          </template>
+          
+          <!-- 用户消息：头像在右 -->
+          <template v-else>
+            <div class="message-body">
+              <!-- 纯图片消息 - 无气泡直接展示（只有图片没有文字时显示） -->
+              <div v-if="msg.image && isValidImage(msg.image)" class="image-message">
+                <img :src="msg.image" @click="previewImage(msg.image)" />
+              </div>
+              <!-- 文字消息 - 不带图片 -->
+              <div v-if="msg.content" class="message-content-wrapper user">
+                <MessageDecoration type="user" :size="30" class="bubble-decoration" />
+                <div class="message-content user">
+                  <div v-html="renderMarkdown(msg.content)"></div>
+                </div>
+              </div>
+            </div>
+            <UserAvatar :size="40" />
+          </template>
         </div>
       </div>
 
       <!-- 加载中指示器 -->
-      <div v-if="loading" class="message assistant">
+      <div v-if="loading && !isStreaming" class="message assistant">
         <AiAvatar :size="40" />
         <div class="message-content-wrapper assistant">
           <MessageDecoration type="ai" :size="30" class="bubble-decoration" />
@@ -96,12 +118,20 @@
         <div class="divider-line"></div>
       </div>
       <div class="input-container">
-        <button class="icon-btn attach-btn" @click="showAttachMenu = !showAttachMenu" title="附件">
+        <button class="icon-btn attach-btn" @click="triggerImageUpload" title="发送图片">
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <line x1="12" y1="5" x2="12" y2="19"/>
-            <line x1="5" y1="12" x2="19" y2="12"/>
+            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+            <circle cx="8.5" cy="8.5" r="1.5"/>
+            <polyline points="21 15 16 10 5 21"/>
           </svg>
         </button>
+        <input
+          ref="imageInput"
+          type="file"
+          accept="image/*"
+          @change="handleImageSelect"
+          style="display: none"
+        />
         <input
           type="text"
           v-model="inputMessage"
@@ -110,57 +140,58 @@
           ref="inputElement"
           class="message-input"
         />
-        <button class="icon-btn send-btn" @click="sendMessage" :disabled="!inputMessage.trim() || loading">
+        <button class="icon-btn send-btn" @click="sendMessage" :disabled="!canSend">
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M22 2L11 13"/>
             <path d="M22 2L15 22L11 13L2 9L22 2Z"/>
           </svg>
         </button>
       </div>
-
-      <!-- 附件菜单 -->
-      <div v-if="showAttachMenu" class="attach-menu">
-        <button @click="uploadImage">📷 图片识别</button>
-        <button @click="uploadFile">📎 读取文件</button>
-      </div>
     </div>
+    
+    <!-- 图片预览 -->
+    <Transition name="fade">
+      <div v-if="previewImageUrl" class="image-preview-overlay" @click="previewImageUrl = null">
+        <img :src="previewImageUrl" @click.stop />
+        <button class="close-preview" @click="previewImageUrl = null">×</button>
+      </div>
+    </Transition>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, nextTick, computed } from 'vue'
+import { ref, onMounted, nextTick, computed, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { chatAPI } from '../api'
 import { marked } from 'marked'
+import { toast, confirm } from '../utils/toast'
 import AiAvatar from '../components/AiAvatar.vue'
 import UserAvatar from '../components/UserAvatar.vue'
-import StarIcon from '../components/StarIcon.vue'
 import MessageDecoration from '../components/MessageDecoration.vue'
 
 const router = useRouter()
-
 const user = ref(JSON.parse(localStorage.getItem('user') || '{}'))
 
-// 从本地存储加载消息
-const loadLocalMessages = () => {
-  const saved = localStorage.getItem('chat_messages')
-  return saved ? JSON.parse(saved) : []
-}
-
-// 保存消息到本地存储
-const saveLocalMessages = () => {
-  localStorage.setItem('chat_messages', JSON.stringify(messages.value))
-}
-
-const messages = ref(loadLocalMessages())
+// 消息列表
+const messages = ref([])
 const inputMessage = ref('')
 const loading = ref(false)
 const isTyping = ref(false)
-let typingTimer = null
+const isStreaming = ref(false)
 const showMenu = ref(false)
-const showAttachMenu = ref(false)
 const messagesContainer = ref(null)
 const inputElement = ref(null)
+const imageInput = ref(null)
+const previewImageUrl = ref(null)
+
+// 请求控制
+let currentAbortController = null
+let pendingMessage = null
+
+// 计算是否可以发送（loading时也可以发，用于中断当前请求）
+const canSend = computed(() => {
+  return inputMessage.value.trim().length > 0
+})
 
 // 根据时间显示问候语
 const currentGreeting = computed(() => {
@@ -173,78 +204,244 @@ const currentGreeting = computed(() => {
   return '晚上好'
 })
 
+// 生成消息ID
+const generateId = () => Date.now().toString(36) + Math.random().toString(36).substr(2)
+
 // 加载聊天历史
 const loadHistory = async () => {
   try {
-    const response = await chatAPI.getHistory(50)
-    messages.value = response.history.map(msg => ({
-      role: msg.role,
-      content: msg.content,
-      timestamp: new Date(msg.timestamp)
-    }))
+    const response = await chatAPI.getHistory(100)
+    if (response.history && response.history.length > 0) {
+      messages.value = response.history.map(msg => ({
+        id: msg.id || generateId(),
+        role: msg.role,
+        content: msg.content,
+        image: msg.image || null,
+        timestamp: new Date(msg.timestamp)
+      }))
+    }
     scrollToBottom()
   } catch (err) {
     console.error('加载历史失败:', err)
   }
 }
 
-// 发送消息
-const sendMessage = async () => {
-  if (!inputMessage.value.trim() || loading.value) return
-
-  const userMessage = inputMessage.value.trim()
+// 发送消息（核心逻辑）
+const sendMessage = async (imageBase64 = null) => {
+  const textContent = inputMessage.value.trim()
+  
+  // 如果没有内容和图片，直接返回
+  if (!textContent && !imageBase64) return
+  
+  // 清空输入
   inputMessage.value = ''
-
-  // 添加用户消息
-  messages.value.push({
+  
+  // 添加用户消息（无论什么状态都先添加）
+  const userMsg = {
+    id: generateId(),
     role: 'user',
-    content: userMessage,
+    content: textContent || '',
+    image: imageBase64 || null,
     timestamp: new Date()
-  })
-  saveLocalMessages()
-
-  scrollToBottom()
-  loading.value = true
-  
-  // 开始显示“正在输入中”
-  isTyping.value = true
-  
-  // 模拟偶尔中断输入（20%概率）
-  if (Math.random() < 0.2) {
-    await new Promise(resolve => setTimeout(resolve, 800 + Math.random() * 1200))
-    isTyping.value = false
-    await new Promise(resolve => setTimeout(resolve, 300 + Math.random() * 500))
-    isTyping.value = true
   }
-
-  try {
-    const response = await chatAPI.sendMessage(userMessage)
-    
-    // 添加AI回复
-    messages.value.push({
-      role: 'assistant',
-      content: response.content,
-      timestamp: new Date(response.timestamp)
-    })
-    saveLocalMessages()
-
-    scrollToBottom()
-  } catch (err) {
-    console.error('发送消息失败:', err)
-    messages.value.push({
-      role: 'assistant',
-      content: '抱歉，我现在无法回复。请稍后再试。',
-      timestamp: new Date()
-    })
-    saveLocalMessages()
-  } finally {
+  messages.value.push(userMsg)
+  scrollToBottom()
+  
+  // 情况1：AI正在等待回复（loading但还没开始流式输出）
+  // → 立即中断当前请求，重新发送包含新消息的请求
+  if (loading.value && !isStreaming.value) {
+    console.log('AI等待中，中断并重新发送')
+    // 取消当前请求
+    if (currentAbortController) {
+      currentAbortController.abort()
+      currentAbortController = null
+    }
     loading.value = false
     isTyping.value = false
+    // 重新发送请求（包含刚添加的新消息）
+    await requestAIResponse()
+    return
   }
+  
+  // 情况2：AI正在流式输出
+  // → 顺序处理，等AI输出完再发送
+  if (isStreaming.value) {
+    pendingMessage = { text: textContent, image: imageBase64, alreadyAdded: true }
+    toast.info('消息已排队，等待当前回复完成')
+    return
+  }
+  
+  // 情况3：空闲状态，直接发送
+  await requestAIResponse()
+}
+
+// 请求AI回复
+const requestAIResponse = async () => {
+  loading.value = true
+  isTyping.value = true
+  
+  // 创建新的AbortController
+  currentAbortController = new AbortController()
+  
+  try {
+    // 收集最近的消息（包含图片）
+    const recentMessages = collectRecentMessages()
+    
+    const response = await chatAPI.sendMessageWithContext(recentMessages, {
+      signal: currentAbortController.signal
+    })
+    
+    // 开始流式渲染
+    isStreaming.value = true
+    loading.value = false
+    isTyping.value = false
+    
+    // 添加AI回复消息
+    const aiMsg = {
+      id: generateId(),
+      role: 'assistant',
+      content: '',
+      timestamp: new Date()
+    }
+    messages.value.push(aiMsg)
+    const msgIndex = messages.value.length - 1
+    
+    // 流式渲染
+    await streamRenderMessage(response.content, msgIndex)
+    
+    isStreaming.value = false
+    
+    // 检查是否有排队的消息
+    if (pendingMessage) {
+      const pending = pendingMessage
+      pendingMessage = null
+      
+      // 如果消息还没添加过，才添加（alreadyAdded标记）
+      if (!pending.alreadyAdded) {
+        const pendingUserMsg = {
+          id: generateId(),
+          role: 'user',
+          content: pending.text,
+          image: pending.image,
+          timestamp: new Date()
+        }
+        messages.value.push(pendingUserMsg)
+        scrollToBottom()
+      }
+      
+      // 继续请求AI（消息已在messages里了）
+      await requestAIResponse()
+    }
+    
+  } catch (err) {
+    if (err.name === 'AbortError') {
+      console.log('请求已取消')
+    } else {
+      console.error('发送消息失败:', err)
+      toast.error('消息发送失败，请重试')
+    }
+    loading.value = false
+    isTyping.value = false
+    isStreaming.value = false
+  }
+  
+  currentAbortController = null
+}
+
+// 收集最近消息（包含图片，用于发送给AI）
+const collectRecentMessages = () => {
+  const result = []
+  const imageRoundLimit = 5 // 最近5轮内的图片
+  let roundCount = 0
+  
+  // 从最新消息往前遍历
+  for (let i = messages.value.length - 1; i >= 0 && result.length < 80; i--) {
+    const msg = messages.value[i]
+    
+    // 计算轮次（每个assistant回复算一轮）
+    if (msg.role === 'assistant') {
+      roundCount++
+    }
+    
+    const msgData = {
+      role: msg.role,
+      content: msg.content || ''
+    }
+    
+    // 如果在图片轮次限制内且有图片，添加图片（确保是字符串）
+    if (msg.image && typeof msg.image === 'string' && roundCount <= imageRoundLimit) {
+      msgData.image = msg.image
+    }
+    
+    result.unshift(msgData)
+  }
+  
+  return result
+}
+
+// 流式渲染消息
+const streamRenderMessage = async (fullContent, messageIndex) => {
+  if (!fullContent) return
+  
+  let displayed = ''
+  
+  for (let i = 0; i < fullContent.length; i++) {
+    displayed += fullContent[i]
+    messages.value[messageIndex].content = displayed
+    
+    const char = fullContent[i]
+    const isChineseChar = /[\u4e00-\u9fff]/.test(char)
+    await new Promise(resolve => setTimeout(resolve, isChineseChar ? 25 : 12))
+    
+    if (i % 15 === 0) scrollToBottom()
+  }
+  
+  messages.value[messageIndex].content = fullContent
+  scrollToBottom()
+}
+
+// 触发图片选择
+const triggerImageUpload = () => {
+  imageInput.value?.click()
+}
+
+// 处理图片选择
+const handleImageSelect = async (event) => {
+  const file = event.target.files[0]
+  if (!file) return
+  
+  // 检查文件大小
+  if (file.size > 10 * 1024 * 1024) {
+    toast.error('图片大小不能超过10MB')
+    return
+  }
+  
+  // 转换为base64
+  const reader = new FileReader()
+  reader.onload = async (e) => {
+    const base64 = e.target.result
+    await sendMessage(base64)
+  }
+  reader.readAsDataURL(file)
+  
+  // 清空input
+  event.target.value = ''
+}
+
+// 预览图片
+const previewImage = (url) => {
+  previewImageUrl.value = url
+}
+
+// 检查是否是有效的图片（base64或URL）
+const isValidImage = (img) => {
+  if (!img || typeof img !== 'string') return false
+  return img.startsWith('data:image') || img.startsWith('http')
 }
 
 // 渲染Markdown
 const renderMarkdown = (content) => {
+  if (!content) return ''
   try {
     return marked(content, { breaks: true })
   } catch {
@@ -255,27 +452,19 @@ const renderMarkdown = (content) => {
 // 判断是否显示时间戳
 const shouldShowTimestamp = (index) => {
   if (index === 0) return true
-  
-  const current = messages.value[index].timestamp
-  const previous = messages.value[index - 1].timestamp
-  
-  // 如果时间相差超过5分钟，显示时间戳
+  const current = new Date(messages.value[index].timestamp)
+  const previous = new Date(messages.value[index - 1].timestamp)
   return (current - previous) > 5 * 60 * 1000
 }
 
 // 格式化时间戳
 const formatTimestamp = (timestamp) => {
   const date = new Date(timestamp)
-  const now = new Date()
-  
   const month = date.getMonth() + 1
   const day = date.getDate()
   const hours = date.getHours().toString().padStart(2, '0')
   const minutes = date.getMinutes().toString().padStart(2, '0')
-  
-  // 判断上午/下午
   const period = hours < 12 ? '上午' : '下午'
-  
   return `${month}/${day} ${period} ${hours}:${minutes}`
 }
 
@@ -288,37 +477,46 @@ const scrollToBottom = () => {
   })
 }
 
-// 上传图片
-const uploadImage = () => {
-  showAttachMenu.value = false
-  // TODO: 实现图片上传功能
-  alert('图片识别功能开发中')
-}
-
-// 上传文件
-const uploadFile = () => {
-  showAttachMenu.value = false
-  // TODO: 实现文件上传功能
-  alert('文件读取功能开发中')
-}
-
-// 显示关于信息
+// 显示关于
 const showAbout = () => {
   showMenu.value = false
-  alert('启明 - 你的AI聊天伙伴\n版本 1.0\n\n一个友好、智能的聊天助手。')
+  toast.info('启明 - 你的AI伙伴 v1.0')
+}
+
+// 跳转设置
+const goToSettings = () => {
+  showMenu.value = false
+  router.push('/settings')
 }
 
 // 退出登录
-const logout = () => {
-  localStorage.removeItem('token')
-  localStorage.removeItem('user')
-  router.push('/login')
+const logout = async () => {
+  showMenu.value = false
+  const confirmed = await confirm({
+    title: '退出登录',
+    message: '确定要退出登录吗？',
+    type: 'danger',
+    confirmText: '退出'
+  })
+  
+  if (confirmed) {
+    localStorage.removeItem('token')
+    localStorage.removeItem('user')
+    router.push('/login')
+  }
 }
 
-onMounted(() => {
-  // 自动聚焦输入框
+onMounted(async () => {
+  await loadHistory()
   if (inputElement.value) {
     inputElement.value.focus()
+  }
+})
+
+onUnmounted(() => {
+  // 清理AbortController
+  if (currentAbortController) {
+    currentAbortController.abort()
   }
 })
 </script>
@@ -393,11 +591,21 @@ onMounted(() => {
   background: white;
   box-shadow: 2px 0 10px rgba(0, 0, 0, 0.1);
   transition: left 0.3s;
-  z-index: 100;
+  z-index: 101;
 }
 
 .sidebar.show {
   left: 0;
+}
+
+.sidebar-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.3);
+  z-index: 100;
 }
 
 .sidebar-header {
@@ -440,7 +648,7 @@ onMounted(() => {
   background: var(--color-bg-light);
 }
 
-/* 消息区域 - 固定头尾，只滚动内容 */
+/* 消息区域 */
 .chat-messages {
   flex: 1;
   overflow-y: auto;
@@ -472,7 +680,8 @@ onMounted(() => {
 
 /* 消息组 */
 .message-group {
-  margin-bottom: 1.5rem;
+  margin-bottom: 1rem;
+  overflow: visible;
 }
 
 .timestamp {
@@ -486,98 +695,256 @@ onMounted(() => {
 .message {
   display: flex;
   align-items: flex-start;
-  margin-bottom: 1rem;
+  margin-bottom: 0.75rem;
   gap: 0.75rem;
+  overflow: visible;
 }
 
 .message.assistant {
-  flex-direction: row;
   justify-content: flex-start;
 }
 
 .message.user {
-  flex-direction: row;
   justify-content: flex-end;
+}
+
+.message-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  max-width: 70%;
+  min-width: 0;
+  overflow: visible;
+  padding-bottom: 12px;
+  padding-right: 12px;
+}
+
+/* 图片消息 - 无气泡直接展示 */
+.image-message {
+  max-width: 300px;
+  border-radius: 12px;
+  overflow: hidden;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.image-message img {
   width: 100%;
+  display: block;
+  transition: transform 0.2s;
 }
 
-.message :deep(.ai-avatar) {
-  margin-right: 0.75rem;
-}
-
-.message :deep(.user-avatar) {
-  margin-left: 0.75rem;
-  order: 2;
+.image-message:hover img {
+  transform: scale(1.02);
 }
 
 .message-content-wrapper {
   position: relative;
-  max-width: 70%;
+  display: inline-block;
+  overflow: visible;
 }
 
 .message-content-wrapper.user {
-  order: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  overflow: visible;
+}
+
+.message-content-wrapper.assistant {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  overflow: visible;
 }
 
 .bubble-decoration {
   position: absolute;
+  z-index: 2;
+  pointer-events: none;
 }
 
-.message.assistant .bubble-decoration {
-  bottom: -8px;
-  left: -8px;
+/* AI消息装饰：黄色星星在右下角 */
+.message-content-wrapper.assistant .bubble-decoration {
+  bottom: -10px;
+  right: -10px;
 }
 
-.message.user .bubble-decoration {
-  top: -8px;
-  right: -8px;
+/* 用户消息装饰：蓝色星星在右下角 */
+.message-content-wrapper.user .bubble-decoration {
+  bottom: -10px;
+  right: -10px;
 }
 
 .message-content {
-  padding: 0.75rem 1rem;
-  border-radius: 12px;
-  line-height: 1.5;
+  padding: 0.875rem 1.125rem;
+  border-radius: 16px;
+  line-height: 1.6;
   text-align: left;
   background: white;
-  color: #000;
+  color: #333;
   font-weight: 500;
   position: relative;
   z-index: 1;
+  overflow: hidden;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
 }
 
 .message-content.assistant {
-  border: 3px solid #FFA500;
-  border-bottom-left-radius: 4px;
+  border: 2.5px solid #F4A500;
+  border-radius: 4px 16px 16px 16px;
+  box-shadow: 
+    2px 2px 0 rgba(244, 165, 0, 0.15),
+    0 2px 8px rgba(0, 0, 0, 0.05);
 }
 
 .message-content.user {
-  border: 3px solid var(--color-accent);
-  border-bottom-right-radius: 4px;
+  border: 2.5px solid #6BB8D9;
+  border-radius: 16px 16px 16px 4px;
+  box-shadow: 
+    2px 2px 0 rgba(107, 184, 217, 0.15),
+    0 2px 8px rgba(0, 0, 0, 0.05);
+}
+
+/* Markdown内容样式修复 */
+.message-content :deep(p) {
+  margin: 0 0 0.5em 0;
+}
+
+.message-content :deep(p:last-child) {
+  margin-bottom: 0;
+}
+
+.message-content :deep(ul),
+.message-content :deep(ol) {
+  margin: 0.5em 0;
+  padding-left: 1.5em;
+}
+
+.message-content :deep(li) {
+  margin: 0.25em 0;
+}
+
+.message-content :deep(pre) {
+  margin: 0.5em 0;
+  padding: 0.75em;
+  background: #f5f5f5;
+  border-radius: 8px;
+  overflow-x: auto;
+  font-size: 0.9em;
+}
+
+.message-content :deep(code) {
+  font-family: 'Consolas', 'Monaco', monospace;
+  font-size: 0.9em;
+  background: #f5f5f5;
+  padding: 0.15em 0.4em;
+  border-radius: 4px;
+}
+
+.message-content :deep(pre code) {
+  background: none;
+  padding: 0;
+}
+
+.message-content :deep(blockquote) {
+  margin: 0.5em 0;
+  padding-left: 1em;
+  border-left: 3px solid #ddd;
+  color: #666;
+}
+
+.message-content :deep(h1),
+.message-content :deep(h2),
+.message-content :deep(h3),
+.message-content :deep(h4) {
+  margin: 0.5em 0 0.25em 0;
+  font-weight: 600;
+}
+
+.message-content :deep(h1) { font-size: 1.3em; }
+.message-content :deep(h2) { font-size: 1.2em; }
+.message-content :deep(h3) { font-size: 1.1em; }
+
+.message-content :deep(table) {
+  border-collapse: collapse;
+  margin: 0.5em 0;
+  width: 100%;
+}
+
+.message-content :deep(th),
+.message-content :deep(td) {
+  border: 1px solid #ddd;
+  padding: 0.5em;
+  text-align: left;
+}
+
+.message-content :deep(th) {
+  background: #f5f5f5;
+  font-weight: 600;
+}
+
+.message-content :deep(hr) {
+  border: none;
+  border-top: 1px solid #ddd;
+  margin: 1em 0;
+}
+
+.message-content :deep(a) {
+  color: #3b82f6;
+  text-decoration: none;
+}
+
+.message-content :deep(a:hover) {
+  text-decoration: underline;
+}
+
+.message-content :deep(img) {
+  max-width: 100%;
+  border-radius: 8px;
+}
+
+/* 确保所有内容不溢出 */
+.message-content :deep(*) {
+  max-width: 100%;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+/* 长代码块横向滚动而非溢出 */
+.message-content :deep(pre) {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+/* 长单词/URL换行 */
+.message-content :deep(p),
+.message-content :deep(li) {
+  word-break: break-word;
 }
 
 .message-content.loading {
   display: flex;
   gap: 0.5rem;
   padding: 1rem 1.5rem;
-  border: 3px solid #FFA500;
+  border: 2.5px solid #F4A500;
+  border-radius: 4px 16px 16px 16px;
   background: white;
+  box-shadow: 
+    2px 2px 0 rgba(244, 165, 0, 0.15),
+    0 2px 8px rgba(0, 0, 0, 0.05);
 }
 
 .loading-dot {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--color-dark);
+  background: #F4A500;
   animation: loading 1.4s infinite;
 }
 
-.loading-dot:nth-child(2) {
-  animation-delay: 0.2s;
-}
-
-.loading-dot:nth-child(3) {
-  animation-delay: 0.4s;
-}
+.loading-dot:nth-child(2) { animation-delay: 0.2s; }
+.loading-dot:nth-child(3) { animation-delay: 0.4s; }
 
 @keyframes loading {
   0%, 60%, 100% {
@@ -612,18 +979,6 @@ onMounted(() => {
   flex: 1;
   height: 2px;
   background: linear-gradient(to right, transparent, #FDD152 10%, #FDD152 90%, transparent);
-  position: relative;
-}
-
-.divider-line::before {
-  content: '';
-  position: absolute;
-  top: -1px;
-  left: 0;
-  right: 0;
-  height: 4px;
-  background: linear-gradient(to right, transparent, rgba(253, 209, 82, 0.3) 10%, rgba(253, 209, 82, 0.3) 90%, transparent);
-  filter: blur(2px);
 }
 
 .star-deco {
@@ -634,12 +989,8 @@ onMounted(() => {
 }
 
 @keyframes starFloat {
-  0%, 100% {
-    transform: translateY(0);
-  }
-  50% {
-    transform: translateY(-8px);
-  }
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-8px); }
 }
 
 .input-container {
@@ -671,10 +1022,6 @@ onMounted(() => {
   box-shadow: 0 0 0 2px var(--color-secondary);
 }
 
-.message-input::placeholder {
-  color: #999;
-}
-
 .icon-btn {
   width: 40px;
   height: 40px;
@@ -696,53 +1043,56 @@ onMounted(() => {
   box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.2);
 }
 
-.icon-btn:active {
-  transform: scale(0.95);
-}
-
-.attach-btn {
-  color: #000;
-}
-
 .send-btn {
   background: var(--color-primary);
-  color: #000;
 }
 
 .send-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
-  transform: none;
 }
 
-/* 附件菜单 */
-.attach-menu {
-  position: absolute;
-  bottom: 100%;
-  left: 1.5rem;
-  margin-bottom: 0.5rem;
-  background: white;
-  border-radius: 12px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
-  padding: 0.5rem;
+/* 图片预览 */
+.image-preview-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.9);
   display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-  z-index: 10;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
 }
 
-.attach-menu button {
-  padding: 0.75rem 1rem;
-  border: none;
-  background: transparent;
-  text-align: left;
-  cursor: pointer;
+.image-preview-overlay img {
+  max-width: 90%;
+  max-height: 90%;
+  object-fit: contain;
   border-radius: 8px;
-  white-space: nowrap;
 }
 
-.attach-menu button:hover {
-  background: var(--color-bg-light);
+.close-preview {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(255, 255, 255, 0.2);
+  color: white;
+  font-size: 24px;
+  cursor: pointer;
+}
+
+.fade-enter-active, .fade-leave-active {
+  transition: opacity 0.2s;
+}
+
+.fade-enter-from, .fade-leave-to {
+  opacity: 0;
 }
 
 /* 移动端适配 */
@@ -752,8 +1102,8 @@ onMounted(() => {
     min-width: 100%;
   }
   
-  .message-content {
-    max-width: 85%;
+  .image-message {
+    max-width: 200px;
   }
   
   .sidebar {

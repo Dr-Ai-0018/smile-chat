@@ -48,7 +48,7 @@ async def recognize_image(user_id: int = Depends(get_current_user)):
     image_path = image_files[0]
     
     try:
-        result = await ai_service.recognize_image(str(image_path))
+        result = await ai_service.recognize_image(str(image_path), user_id)
         return {"description": result}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"图片识别失败: {str(e)}")

@@ -15,7 +15,7 @@
         <div class="user-info">
           <div class="avatar-section">
             <div class="avatar-display" @click="triggerFileUpload">
-              <img v-if="profile.avatar" :src="profile.avatar" alt="头像" />
+              <img v-if="avatarUrl" :src="avatarUrl" alt="头像" />
               <div v-else class="avatar-placeholder">
                 {{ profile.username?.[0]?.toUpperCase() }}
               </div>
@@ -43,47 +43,22 @@
         <h2>聊天设置</h2>
         <div class="setting-item">
           <label>
-            <input type="checkbox" v-model="settings.customBackground" />
-            自定义聊天背景
-          </label>
-        </div>
-        <div class="setting-item">
-          <label>
-            <input type="checkbox" v-model="settings.showTimestamp" />
+            <input type="checkbox" v-model="settings.showTimestamp" @change="saveSettings" />
             显示消息时间戳
           </label>
         </div>
         <div class="setting-item">
           <label>
-            <input type="checkbox" v-model="settings.enableNotifications" />
-            启用通知
+            <input type="checkbox" v-model="settings.enableSound" @change="saveSettings" />
+            消息提示音
           </label>
         </div>
       </section>
 
-      <!-- 记忆管理 -->
+      <!-- 账户操作 -->
       <section class="settings-section">
-        <h2>记忆管理</h2>
-        <p class="section-description">
-          查看和管理AI助手对你的记忆
-        </p>
+        <h2>账户</h2>
         <div class="button-group">
-          <button @click="viewMemory" class="secondary-btn">
-            查看记忆
-          </button>
-          <button @click="compressMemory" class="secondary-btn">
-            压缩记忆
-          </button>
-        </div>
-      </section>
-
-      <!-- 危险操作 -->
-      <section class="settings-section danger-zone">
-        <h2>危险操作</h2>
-        <div class="button-group">
-          <button @click="clearHistory" class="danger-btn">
-            清空聊天记录
-          </button>
           <button @click="logout" class="danger-btn">
             退出登录
           </button>
@@ -100,9 +75,10 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
-import { userAPI, memoryAPI } from '../api'
+import { userAPI } from '../api'
+import { toast, confirm } from '../utils/toast'
 
 const router = useRouter()
 
@@ -113,14 +89,22 @@ const profile = ref({
 })
 
 const settings = ref({
-  customBackground: false,
   showTimestamp: true,
-  enableNotifications: false
+  enableSound: true
 })
 
 const loading = ref(false)
 const loadingText = ref('')
 const fileInput = ref(null)
+
+// 计算头像URL（添加时间戳防止缓存）
+const avatarUrl = computed(() => {
+  if (!profile.value.avatar) return ''
+  // 添加时间戳参数强制刷新
+  const timestamp = Date.now()
+  const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
+  return `${baseUrl}${profile.value.avatar}?t=${timestamp}`
+})
 
 // 加载用户信息
 const loadProfile = async () => {
@@ -129,6 +113,7 @@ const loadProfile = async () => {
     profile.value = data
   } catch (err) {
     console.error('加载用户信息失败:', err)
+    toast.error('加载用户信息失败')
   }
 }
 
@@ -144,7 +129,7 @@ const uploadAvatar = async (event) => {
 
   // 检查文件大小（不超过5MB）
   if (file.size > 5 * 1024 * 1024) {
-    alert('图片大小不能超过5MB')
+    toast.error('图片大小不能超过5MB')
     return
   }
 
@@ -156,6 +141,8 @@ const uploadAvatar = async (event) => {
     formData.append('file', file)
 
     const response = await userAPI.uploadAvatar(formData)
+    
+    // 更新profile触发重新计算avatarUrl
     profile.value.avatar = response.avatar
     
     // 更新localStorage
@@ -163,80 +150,38 @@ const uploadAvatar = async (event) => {
     user.avatar = response.avatar
     localStorage.setItem('user', JSON.stringify(user))
     
-    alert('头像上传成功！')
+    toast.success('头像上传成功！')
   } catch (err) {
     console.error('头像上传失败:', err)
-    alert('头像上传失败，请重试')
+    toast.error('头像上传失败，请重试')
   } finally {
     loading.value = false
+    // 清空input，允许重新选择同一文件
+    if (fileInput.value) {
+      fileInput.value.value = ''
+    }
   }
 }
 
-// 查看记忆
-const viewMemory = async () => {
-  loading.value = true
-  loadingText.value = '加载记忆中...'
-
-  try {
-    const memory = await memoryAPI.getMemory(profile.value.id)
-    console.log('用户记忆:', memory)
-    
-    // 简单展示记忆（实际应该有更好的UI）
-    let memoryText = '=== 聊天历史 ===\n'
-    memory.history.forEach(h => {
-      memoryText += `${h.file}:\n${h.content.substring(0, 100)}...\n\n`
-    })
-    
-    memoryText += '\n=== JSON记忆 ===\n'
-    memoryText += JSON.stringify(memory.json, null, 2).substring(0, 200) + '...\n\n'
-    
-    memoryText += '\n=== 长期记忆 ===\n'
-    memory.memory.forEach((m, i) => {
-      if (i < 3) memoryText += `${m}\n\n`
-    })
-    
-    alert(memoryText)
-  } catch (err) {
-    console.error('加载记忆失败:', err)
-    alert('加载记忆失败')
-  } finally {
-    loading.value = false
-  }
-}
-
-// 压缩记忆
-const compressMemory = async () => {
-  if (!confirm('确定要压缩记忆吗？这将使用AI对历史记录进行总结。')) {
-    return
-  }
-
-  loading.value = true
-  loadingText.value = '压缩记忆中...'
-
-  try {
-    await memoryAPI.compressMemory(profile.value.id)
-    alert('记忆压缩成功！')
-  } catch (err) {
-    console.error('压缩记忆失败:', err)
-    alert('压缩记忆失败')
-  } finally {
-    loading.value = false
-  }
-}
-
-// 清空聊天记录
-const clearHistory = () => {
-  if (confirm('确定要清空所有聊天记录吗？此操作无法撤销！')) {
-    // TODO: 实现清空历史的API
-    alert('清空功能开发中')
-  }
+// 保存设置
+const saveSettings = () => {
+  localStorage.setItem('chat_settings', JSON.stringify(settings.value))
+  toast.success('设置已保存')
 }
 
 // 退出登录
-const logout = () => {
-  if (confirm('确定要退出登录吗？')) {
+const logout = async () => {
+  const confirmed = await confirm({
+    title: '退出登录',
+    message: '确定要退出登录吗？',
+    type: 'danger',
+    confirmText: '退出'
+  })
+  
+  if (confirmed) {
     localStorage.removeItem('token')
     localStorage.removeItem('user')
+    localStorage.removeItem('chat_messages')
     router.push('/login')
   }
 }
@@ -247,14 +192,9 @@ onMounted(() => {
   // 从localStorage加载设置
   const savedSettings = localStorage.getItem('chat_settings')
   if (savedSettings) {
-    settings.value = JSON.parse(savedSettings)
+    settings.value = { ...settings.value, ...JSON.parse(savedSettings) }
   }
 })
-
-// 监听设置变化并保存
-const saveSettings = () => {
-  localStorage.setItem('chat_settings', JSON.stringify(settings.value))
-}
 </script>
 
 <style scoped>
@@ -304,11 +244,6 @@ const saveSettings = () => {
   margin: 0 0 1.5rem 0;
   font-size: 1.25rem;
   color: var(--color-dark);
-}
-
-.section-description {
-  color: #666;
-  margin-bottom: 1rem;
 }
 
 /* 用户信息 */
@@ -406,26 +341,19 @@ const saveSettings = () => {
   flex-wrap: wrap;
 }
 
-.secondary-btn {
-  background: var(--color-accent);
-  color: white;
-}
-
-.secondary-btn:hover {
-  background: #1e5f8a;
-}
-
 .danger-btn {
   background: #dc3545;
   color: white;
+  padding: 0.75rem 1.5rem;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 1rem;
+  transition: background 0.2s;
 }
 
 .danger-btn:hover {
   background: #c82333;
-}
-
-.danger-zone {
-  border: 2px solid #dc3545;
 }
 
 /* 加载覆盖层 */

@@ -24,32 +24,22 @@ export const userAPI = {
 }
 
 export const chatAPI = {
-  // 发送消息
+  // 发送消息（带完整上下文，支持图片）
+  sendMessageWithContext: (messages, options = {}) => 
+    client.post('/chat/send_with_context', { messages }, options),
+  
+  // 发送消息（旧接口兼容）
   sendMessage: (content) => client.post('/chat/send', { content }),
   
   // 获取聊天历史
-  getHistory: (limit = 50) => client.get(`/chat/history?limit=${limit}`)
+  getHistory: (limit = 100) => client.get(`/chat/history?limit=${limit}`)
 }
 
 export const imageAPI = {
   // 上传图片
   upload: (formData) => client.post('/image/upload', formData, {
     headers: { 'Content-Type': 'multipart/form-data' }
-  }),
-  
-  // 识别图片
-  recognize: () => client.post('/image/recognize')
-}
-
-export const memoryAPI = {
-  // 获取记忆
-  getMemory: (userId) => client.get(`/memory/${userId}`),
-  
-  // 更新记忆
-  updateMemory: (data) => client.post('/memory/update', data),
-  
-  // 压缩记忆
-  compressMemory: (userId) => client.post('/memory/compress', { user_id: userId })
+  })
 }
 
 export const adminAPI = {
@@ -64,7 +54,37 @@ export const adminAPI = {
   
   // 重置密码
   resetPassword: (userId, newPassword) => 
-    client.post('/admin/reset_password', { user_id: userId, new_password: newPassword })
+    client.post('/admin/reset_password', { user_id: userId, new_password: newPassword }),
+  
+  // 查看用户聊天记录（管理员权限）
+  getUserHistory: (userId, limit = 100) => 
+    client.get(`/admin/user/${userId}/history?limit=${limit}`),
+  
+  // 查看用户记忆（管理员权限）
+  getUserMemory: (userId) => client.get(`/admin/user/${userId}/memory`),
+  
+  // 清空用户聊天记录（管理员权限）
+  clearUserHistory: (userId) => client.delete(`/admin/user/${userId}/history`),
+  
+  // 获取所有用户的记忆状态
+  getAllMemory: () => client.get('/admin/memory/all'),
+  
+  // 更新用户长期记忆
+  updateUserLongTermMemory: (userId, content) => 
+    client.put(`/admin/user/${userId}/memory/long_term`, { content }),
+  
+  // 清空用户记忆
+  clearUserMemory: (userId) => client.delete(`/admin/user/${userId}/memory`),
+  
+  // 获取历史文件内容
+  getHistoryFile: (userId, filename) => 
+    client.get(`/admin/user/${userId}/history_file/${filename}`),
+  
+  // 删除用户
+  deleteUser: (userId) => client.delete(`/admin/user/${userId}`),
+  
+  // 获取系统统计
+  getStats: () => client.get('/admin/stats')
 }
 
 export const configAPI = {
