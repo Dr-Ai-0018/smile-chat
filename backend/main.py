@@ -11,13 +11,11 @@ from pathlib import Path
 import uvicorn
 
 from routers import auth, chat, user, memory, admin, image, config
-from database import init_db
 from utils.jwt import verify_token
 
 # 初始化数据库
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    init_db()
     yield
 
 app = FastAPI(

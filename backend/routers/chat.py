@@ -2,7 +2,6 @@
 聊天路由 - AI对话功能
 """
 from fastapi import APIRouter, Depends, HTTPException
-from sqlite3 import Connection
 from pathlib import Path
 import json
 import asyncio
@@ -10,12 +9,13 @@ from datetime import datetime, timedelta
 from typing import List, Optional
 from pydantic import BaseModel
 
-from database import get_db
 from routers.user import get_current_user
 from services.ai_service import AIService
+from storage import JsonStorage
 
 router = APIRouter()
 ai_service = AIService()
+storage = JsonStorage()
 
 # Memory文件系统路径
 MEMORY_DIR = Path(__file__).parent.parent.parent / "memory" / "本体"
@@ -24,7 +24,6 @@ MEMORY_DIR = Path(__file__).parent.parent.parent / "memory" / "本体"
 user_activity = {}
 # 记录用户的当前聊天请求，用于新消息到来时主动取消旧请求
 active_request_events = {}
-
 
 def register_request(user_id: int) -> asyncio.Event:
     """为用户注册一个新的取消事件，并中断旧请求"""
@@ -35,7 +34,6 @@ def register_request(user_id: int) -> asyncio.Event:
     new_event = asyncio.Event()
     active_request_events[user_id] = new_event
     return new_event
-
 
 def clear_request(user_id: int, event: asyncio.Event):
     """清理已完成的请求事件，避免误伤后续请求"""
@@ -110,16 +108,18 @@ class ChatResponse(BaseModel):
     role: str = "assistant"
     content: str
     timestamp: datetime
+    # v2 fields
+    reply: Optional[str] = None
+    segments: Optional[List[str]] = None
+    meta: Optional[dict] = None
 
 @router.post("/send_with_context")
 async def send_message_with_context(
     request: SendMessageRequest,
-    user_id: int = Depends(get_current_user),
-    db: Connection = Depends(get_db)
+    user_id: int = Depends(get_current_user)
 ):
     """发送消息（带完整上下文，支持图片）"""
     cancel_event = register_request(user_id)
-    cursor = db.cursor()
     
     # 获取最后一条用户消息
     user_messages = [m for m in request.messages if m.role == "user"]
@@ -128,19 +128,20 @@ async def send_message_with_context(
     
     last_user_msg = user_messages[-1]
     
-    # 保存用户消息到数据库
-    cursor.execute(
-        "INSERT INTO chat_history (user_id, role, content, image) VALUES (?, ?, ?, ?)",
-        (user_id, "user", last_user_msg.content or "", last_user_msg.image)
+    # 保存用户消息到JSON聊天历史
+    storage.append_chat_message(
+        user_id=user_id,
+        role="user",
+        content=last_user_msg.content or "",
+        image=last_user_msg.image,
     )
-    db.commit()
     
     # 同时保存到Memory文件系统
     save_message_to_history(user_id, "user", last_user_msg.content or "", last_user_msg.image)
     
     try:
-        # 调用AI服务
-        response = await ai_service.chat_with_context(
+        # 调用AI服务 (使用v2协议化接口)
+        response = await ai_service.chat_with_context_v2(
             messages=[m.dict() for m in request.messages],
             user_id=user_id,
             cancel_event=cancel_event
@@ -149,23 +150,30 @@ async def send_message_with_context(
         if cancel_event.is_set():
             raise asyncio.CancelledError("请求被新的消息中断")
         
-        # 保存AI回复到数据库
-        cursor.execute(
-            "INSERT INTO chat_history (user_id, role, content) VALUES (?, ?, ?)",
-            (user_id, "assistant", response["content"])
+        reply_content = response.get("reply", response.get("content", ""))
+        meta = response.get("meta", {})
+        
+        # 保存AI回复到JSON聊天历史（包含meta信息）
+        storage.append_chat_message(
+            user_id=user_id,
+            role="assistant",
+            content=reply_content,
+            meta=meta,
         )
-        db.commit()
         
         # 同时保存AI回复到Memory文件系统
-        save_message_to_history(user_id, "assistant", response["content"])
+        save_message_to_history(user_id, "assistant", reply_content)
         
         # 自动记忆压缩逻辑
-        await check_and_compress_memory(user_id, cursor, db)
+        await check_and_compress_memory(user_id)
         
         return ChatResponse(
             role="assistant",
-            content=response["content"],
-            timestamp=datetime.now()
+            content=reply_content,
+            timestamp=datetime.now(),
+            reply=response.get("reply"),
+            segments=response.get("segments"),
+            meta=meta,
         )
     except asyncio.CancelledError:
         raise HTTPException(status_code=499, detail="请求已被新的消息取消")
@@ -174,7 +182,7 @@ async def send_message_with_context(
     finally:
         clear_request(user_id, cancel_event)
 
-async def check_and_compress_memory(user_id: int, cursor, db):
+async def check_and_compress_memory(user_id: int):
     """检查并执行自动记忆压缩"""
     now = datetime.now()
     
@@ -214,16 +222,15 @@ async def check_and_compress_memory(user_id: int, cursor, db):
     # 执行压缩
     if should_compress:
         try:
-            # 获取未压缩的消息
-            cursor.execute(
-                "SELECT role, content FROM chat_history WHERE user_id = ? ORDER BY timestamp DESC LIMIT ?",
-                (user_id, activity["msg_since_compress"])
-            )
+            msg_count = activity["msg_since_compress"]
+            if msg_count <= 0:
+                return
+
+            history_items = storage.get_chat_history(user_id=user_id, limit=msg_count)
             messages_to_compress = [
-                {"role": row["role"], "content": row["content"]} 
-                for row in cursor.fetchall()
+                {"role": item.get("role"), "content": item.get("content", "")}
+                for item in history_items
             ]
-            messages_to_compress.reverse()
             
             # 异步压缩（不阻塞响应）
             asyncio.create_task(
@@ -239,55 +246,18 @@ async def check_and_compress_memory(user_id: int, cursor, db):
 @router.get("/history")
 async def get_history(
     limit: int = 100,
-    user_id: int = Depends(get_current_user),
-    db: Connection = Depends(get_db)
+    user_id: int = Depends(get_current_user)
 ):
     """获取聊天历史"""
-    cursor = db.cursor()
-    
-    # 检查image列是否存在
-    cursor.execute("PRAGMA table_info(chat_history)")
-    columns = [col[1] for col in cursor.fetchall()]
-    
-    if 'image' in columns:
-        cursor.execute(
-            "SELECT id, role, content, image, timestamp FROM chat_history WHERE user_id = ? ORDER BY timestamp DESC LIMIT ?",
-            (user_id, limit)
-        )
-        history = []
-        for row in cursor.fetchall():
-            history.append({
-                "id": row["id"],
-                "role": row["role"],
-                "content": row["content"],
-                "image": row["image"],
-                "timestamp": row["timestamp"]
-            })
-    else:
-        cursor.execute(
-            "SELECT id, role, content, timestamp FROM chat_history WHERE user_id = ? ORDER BY timestamp DESC LIMIT ?",
-            (user_id, limit)
-        )
-        history = []
-        for row in cursor.fetchall():
-            history.append({
-                "id": row["id"],
-                "role": row["role"],
-                "content": row["content"],
-                "image": None,
-                "timestamp": row["timestamp"]
-            })
-    
-    history.reverse()
+    history = storage.get_chat_history(user_id=user_id, limit=limit)
     return {"history": history}
 
 # 保留旧的send接口兼容
 @router.post("/send")
 async def send_message(
     content: str,
-    user_id: int = Depends(get_current_user),
-    db: Connection = Depends(get_db)
+    user_id: int = Depends(get_current_user)
 ):
     """发送聊天消息（旧接口，兼容）"""
     request = SendMessageRequest(messages=[MessageItem(role="user", content=content)])
-    return await send_message_with_context(request, user_id, db)
+    return await send_message_with_context(request, user_id)
