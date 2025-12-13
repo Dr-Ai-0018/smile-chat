@@ -2,18 +2,20 @@
 管理路由 - 用户管理、邀请码管理、查看用户数据
 """
 from fastapi import APIRouter, Depends, HTTPException
-from sqlite3 import Connection
 from pathlib import Path
 from pydantic import BaseModel
+from typing import List
 import secrets
 import json
+from datetime import datetime
 
-from database import get_db
 from models.schemas import InviteCodeCreate, PasswordReset
 from utils.password import hash_password
 from routers.user import get_current_user
+from storage import JsonStorage
 
 router = APIRouter()
+storage = JsonStorage()
 
 MEMORY_BASE_PATH = Path(__file__).parent.parent.parent / "memory" / "本体"
 
@@ -27,82 +29,41 @@ def is_admin(user_id: int = Depends(get_current_user)):
 
 @router.get("/users")
 async def list_users(
-    admin_id: int = Depends(is_admin),
-    db: Connection = Depends(get_db)
+    admin_id: int = Depends(is_admin)
 ):
     """获取用户列表"""
-    cursor = db.cursor()
-    cursor.execute("SELECT id, username, avatar, created_at FROM users")
-    
     users = []
-    for row in cursor.fetchall():
-        # 获取用户消息数量
-        cursor.execute("SELECT COUNT(*) as count FROM chat_history WHERE user_id = ?", (row["id"],))
-        msg_count = cursor.fetchone()["count"]
-        
+    for user in storage.read_users():
+        user_id = user.get("id")
+        if not isinstance(user_id, int):
+            continue
+
+        msg_count = storage.count_chat_messages(user_id)
         users.append({
-            "id": row["id"],
-            "username": row["username"],
-            "avatar": row["avatar"],
-            "created_at": row["created_at"],
+            "id": user_id,
+            "username": user.get("username"),
+            "avatar": user.get("avatar"),
+            "created_at": user.get("created_at"),
             "message_count": msg_count
         })
-    
+
     return {"users": users}
 
 @router.get("/user/{user_id}/history")
 async def get_user_history(
     user_id: int,
     limit: int = 100,
-    admin_id: int = Depends(is_admin),
-    db: Connection = Depends(get_db)
+    admin_id: int = Depends(is_admin)
 ):
     """查看指定用户的聊天记录（管理员权限）"""
-    cursor = db.cursor()
-    
-    # 检查用户是否存在
-    cursor.execute("SELECT username FROM users WHERE id = ?", (user_id,))
-    user = cursor.fetchone()
+    user = storage.get_user_by_id(user_id)
     if not user:
         raise HTTPException(status_code=404, detail="用户不存在")
-    
-    # 检查image列是否存在
-    cursor.execute("PRAGMA table_info(chat_history)")
-    columns = [col[1] for col in cursor.fetchall()]
-    
-    if 'image' in columns:
-        cursor.execute(
-            "SELECT id, role, content, image, timestamp FROM chat_history WHERE user_id = ? ORDER BY timestamp DESC LIMIT ?",
-            (user_id, limit)
-        )
-        history = []
-        for row in cursor.fetchall():
-            history.append({
-                "id": row["id"],
-                "role": row["role"],
-                "content": row["content"],
-                "image": row["image"],
-                "timestamp": row["timestamp"]
-            })
-    else:
-        cursor.execute(
-            "SELECT id, role, content, timestamp FROM chat_history WHERE user_id = ? ORDER BY timestamp DESC LIMIT ?",
-            (user_id, limit)
-        )
-        history = []
-        for row in cursor.fetchall():
-            history.append({
-                "id": row["id"],
-                "role": row["role"],
-                "content": row["content"],
-                "image": None,
-                "timestamp": row["timestamp"]
-            })
-    
-    history.reverse()
+
+    history = storage.get_chat_history(user_id=user_id, limit=limit)
     return {
         "user_id": user_id,
-        "username": user["username"],
+        "username": user.get("username"),
         "history": history
     }
 
@@ -110,14 +71,9 @@ async def get_user_history(
 async def get_user_memory(
     user_id: int,
     admin_id: int = Depends(is_admin),
-    db: Connection = Depends(get_db)
 ):
     """查看指定用户的记忆（管理员权限）"""
-    cursor = db.cursor()
-    
-    # 检查用户是否存在
-    cursor.execute("SELECT username FROM users WHERE id = ?", (user_id,))
-    user = cursor.fetchone()
+    user = storage.get_user_by_id(user_id)
     if not user:
         raise HTTPException(status_code=404, detail="用户不存在")
     
@@ -153,7 +109,7 @@ async def get_user_memory(
     
     return {
         "user_id": user_id,
-        "username": user["username"],
+        "username": user.get("username"),
         "memory": memory_data
     }
 
@@ -161,18 +117,12 @@ async def get_user_memory(
 async def clear_user_history(
     user_id: int,
     admin_id: int = Depends(is_admin),
-    db: Connection = Depends(get_db)
 ):
     """清空指定用户的聊天记录（管理员权限）"""
-    cursor = db.cursor()
-    
-    # 检查用户是否存在
-    cursor.execute("SELECT id FROM users WHERE id = ?", (user_id,))
-    if not cursor.fetchone():
+    if not storage.get_user_by_id(user_id):
         raise HTTPException(status_code=404, detail="用户不存在")
-    
-    cursor.execute("DELETE FROM chat_history WHERE user_id = ?", (user_id,))
-    db.commit()
+
+    storage.clear_chat_history(user_id)
     
     return {"message": f"用户 {user_id} 的聊天记录已清空"}
 
@@ -180,59 +130,50 @@ async def clear_user_history(
 async def create_invite_codes(
     req: InviteCodeCreate,
     admin_id: int = Depends(is_admin),
-    db: Connection = Depends(get_db)
 ):
     """创建邀请码"""
-    cursor = db.cursor()
-    codes = []
-    
-    for _ in range(req.count):
-        code = secrets.token_urlsafe(16)
-        cursor.execute("INSERT INTO invites (code) VALUES (?)", (code,))
-        codes.append(code)
-    
-    db.commit()
-    
+    created: List[dict] = []
+    remaining = max(0, int(req.count))
+
+    while remaining > 0:
+        batch = [secrets.token_urlsafe(16) for _ in range(remaining)]
+        created_batch = storage.create_invite_codes(batch)
+        created.extend(created_batch)
+        remaining = req.count - len(created)
+
+    codes = [c.get("code") for c in created if c.get("code")]
     return {"codes": codes, "count": len(codes)}
 
 @router.get("/invites")
 async def list_invites(
     admin_id: int = Depends(is_admin),
-    db: Connection = Depends(get_db)
 ):
     """获取邀请码列表"""
-    cursor = db.cursor()
-    cursor.execute("SELECT code, used, used_by, created_at FROM invites ORDER BY created_at DESC")
-    
-    invites = []
-    for row in cursor.fetchall():
-        invites.append({
-            "code": row["code"],
-            "used": bool(row["used"]),
-            "used_by": row["used_by"],
-            "created_at": row["created_at"]
+    invites = storage.read_invites()
+    invites.sort(key=lambda x: x.get("created_at") or "", reverse=True)
+
+    formatted = []
+    for invite in invites:
+        formatted.append({
+            "code": invite.get("code"),
+            "used": bool(invite.get("used")),
+            "used_by": invite.get("used_by"),
+            "created_at": invite.get("created_at")
         })
-    
-    return {"invites": invites}
+
+    return {"invites": formatted}
 
 @router.post("/reset_password")
 async def reset_password(
     req: PasswordReset,
     admin_id: int = Depends(is_admin),
-    db: Connection = Depends(get_db)
 ):
     """重置用户密码"""
-    cursor = db.cursor()
-    
-    # 检查用户是否存在
-    cursor.execute("SELECT id FROM users WHERE id = ?", (req.user_id,))
-    if not cursor.fetchone():
+    if not storage.get_user_by_id(req.user_id):
         raise HTTPException(status_code=404, detail="用户不存在")
-    
-    # 更新密码
+
     pwd_hash = hash_password(req.new_password)
-    cursor.execute("UPDATE users SET pwd_hash = ? WHERE id = ?", (pwd_hash, req.user_id))
-    db.commit()
+    storage.update_user(req.user_id, {"pwd_hash": pwd_hash})
     
     return {"message": "密码重置成功"}
 
@@ -248,17 +189,14 @@ async def push_message(
 @router.get("/memory/all")
 async def list_all_memory(
     admin_id: int = Depends(is_admin),
-    db: Connection = Depends(get_db)
 ):
     """列出所有用户的记忆状态"""
-    cursor = db.cursor()
-    cursor.execute("SELECT id, username FROM users")
-    users = cursor.fetchall()
-    
     memory_list = []
-    for user in users:
-        user_id = user["id"]
-        username = user["username"]
+    for user in storage.read_users():
+        user_id = user.get("id")
+        username = user.get("username")
+        if not isinstance(user_id, int):
+            continue
         memory_dir = MEMORY_BASE_PATH / str(user_id)
         
         user_memory = {
@@ -300,12 +238,9 @@ async def update_user_long_term_memory(
     user_id: int,
     request: MemoryUpdateRequest,
     admin_id: int = Depends(is_admin),
-    db: Connection = Depends(get_db)
 ):
     """更新用户长期记忆"""
-    cursor = db.cursor()
-    cursor.execute("SELECT id FROM users WHERE id = ?", (user_id,))
-    if not cursor.fetchone():
+    if not storage.get_user_by_id(user_id):
         raise HTTPException(status_code=404, detail="用户不存在")
     
     memory_dir = MEMORY_BASE_PATH / str(user_id) / "memory"
@@ -320,12 +255,9 @@ async def update_user_long_term_memory(
 async def clear_user_memory(
     user_id: int,
     admin_id: int = Depends(is_admin),
-    db: Connection = Depends(get_db)
 ):
     """清空用户所有记忆"""
-    cursor = db.cursor()
-    cursor.execute("SELECT id FROM users WHERE id = ?", (user_id,))
-    if not cursor.fetchone():
+    if not storage.get_user_by_id(user_id):
         raise HTTPException(status_code=404, detail="用户不存在")
     
     memory_dir = MEMORY_BASE_PATH / str(user_id)
@@ -358,22 +290,16 @@ async def get_history_file(
 async def delete_user(
     user_id: int,
     admin_id: int = Depends(is_admin),
-    db: Connection = Depends(get_db)
 ):
     """删除用户及其所有数据"""
     if user_id == 1:
         raise HTTPException(status_code=403, detail="不能删除管理员")
-    
-    cursor = db.cursor()
-    cursor.execute("SELECT id FROM users WHERE id = ?", (user_id,))
-    if not cursor.fetchone():
+
+    if not storage.get_user_by_id(user_id):
         raise HTTPException(status_code=404, detail="用户不存在")
-    
-    # 删除聊天记录
-    cursor.execute("DELETE FROM chat_history WHERE user_id = ?", (user_id,))
-    # 删除用户
-    cursor.execute("DELETE FROM users WHERE id = ?", (user_id,))
-    db.commit()
+
+    storage.clear_chat_history(user_id)
+    storage.delete_user(user_id)
     
     # 删除记忆文件
     import shutil
@@ -386,36 +312,40 @@ async def delete_user(
 @router.get("/stats")
 async def get_system_stats(
     admin_id: int = Depends(is_admin),
-    db: Connection = Depends(get_db)
 ):
     """获取系统统计数据"""
-    cursor = db.cursor()
-    
-    # 用户总数
-    cursor.execute("SELECT COUNT(*) as count FROM users")
-    user_count = cursor.fetchone()["count"]
-    
-    # 消息总数
-    cursor.execute("SELECT COUNT(*) as count FROM chat_history")
-    msg_count = cursor.fetchone()["count"]
-    
-    # 今日消息数
-    cursor.execute("""
-        SELECT COUNT(*) as count FROM chat_history 
-        WHERE date(timestamp) = date('now')
-    """)
-    today_msg_count = cursor.fetchone()["count"]
-    
-    # 活跃用户（今天有消息的用户）
-    cursor.execute("""
-        SELECT COUNT(DISTINCT user_id) as count FROM chat_history
-        WHERE date(timestamp) = date('now')
-    """)
-    active_users = cursor.fetchone()["count"]
-    
-    # 可用邀请码
-    cursor.execute("SELECT COUNT(*) as count FROM invites WHERE used = 0")
-    available_invites = cursor.fetchone()["count"]
+
+    users = storage.read_users()
+    user_count = len(users)
+
+    today = datetime.now().date()
+    msg_count = 0
+    today_msg_count = 0
+    active_users = 0
+    for user in users:
+        uid = user.get("id")
+        if not isinstance(uid, int):
+            continue
+
+        history = storage.get_chat_history(user_id=uid, limit=0)
+        msg_count += len(history)
+
+        has_today = False
+        for item in history:
+            ts = item.get("timestamp")
+            if not ts:
+                continue
+            try:
+                dt = datetime.fromisoformat(ts)
+            except Exception:
+                continue
+            if dt.date() == today:
+                today_msg_count += 1
+                has_today = True
+        if has_today:
+            active_users += 1
+
+    available_invites = sum(1 for i in storage.read_invites() if not i.get("used"))
     
     return {
         "user_count": user_count,

@@ -2,45 +2,37 @@
 项目初始化脚本
 快速设置数据库和创建初始管理员邀请码
 """
-import sqlite3
 import secrets
 from pathlib import Path
+
+from storage import JsonStorage
 
 def init_project():
     print("=== Smile-Chat 项目初始化 ===\n")
     
-    # 1. 初始化数据库
-    print("1. 初始化数据库...")
-    from database import init_db
-    init_db()
+    # 1. 初始化存储
+    print("1. 初始化存储...")
+    storage = JsonStorage()
     
     # 2. 创建管理员邀请码
     print("\n2. 创建管理员邀请码...")
     admin_code = "smile-admin-" + secrets.token_urlsafe(8)
-    
-    db_path = Path(__file__).parent / "data" / "smile_chat.db"
-    conn = sqlite3.connect(str(db_path), check_same_thread=False)
-    cursor = conn.cursor()
-    
-    cursor.execute("INSERT INTO invites (code) VALUES (?)", (admin_code,))
-    conn.commit()
-    conn.close()
+    while True:
+        created = storage.create_invite_codes([admin_code])
+        if created:
+            break
+        admin_code = "smile-admin-" + secrets.token_urlsafe(8)
     
     print(f"   ✓ 管理员邀请码: {admin_code}")
     
     # 3. 创建额外的普通用户邀请码
     print("\n3. 创建5个普通用户邀请码...")
-    conn = sqlite3.connect(str(db_path), check_same_thread=False)
-    cursor = conn.cursor()
-    
     user_codes = []
-    for i in range(5):
+    while len(user_codes) < 5:
         code = "smile-user-" + secrets.token_urlsafe(12)
-        cursor.execute("INSERT INTO invites (code) VALUES (?)", (code,))
-        user_codes.append(code)
-    
-    conn.commit()
-    conn.close()
+        created = storage.create_invite_codes([code])
+        if created:
+            user_codes.append(code)
     
     for i, code in enumerate(user_codes, 1):
         print(f"   {i}. {code}")
