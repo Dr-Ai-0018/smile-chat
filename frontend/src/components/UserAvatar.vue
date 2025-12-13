@@ -2,8 +2,8 @@
   <div class="user-avatar-container" :style="{ width: size + 'px', height: size + 'px' }">
     <!-- 有头像时显示真实头像 -->
     <img 
-      v-if="avatarUrl" 
-      :src="avatarUrl" 
+      v-if="displayUrl" 
+      :src="displayUrl" 
       class="user-avatar-img"
       @error="handleImageError"
     />
@@ -28,76 +28,52 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
-import { userAPI } from '../api'
+import { ref, computed, onMounted } from 'vue'
 
 const props = defineProps({
   size: {
     type: Number,
     default: 40
+  },
+  // 外部传入的头像URL（优先使用）
+  avatarUrl: {
+    type: String,
+    default: ''
   }
 })
 
-const avatarUrl = ref('')
 const imageError = ref(false)
+const localUrl = ref('')
 
-// 全局缓存，避免重复请求
-let avatarCache = null
-let cacheTime = 0
-const CACHE_DURATION = 60000 // 缓存1分钟
+// 计算最终显示的URL（优先用prop传入的，否则用本地读取的）
+const displayUrl = computed(() => {
+  if (imageError.value) return ''
+  return props.avatarUrl || localUrl.value
+})
 
-// 获取头像URL
-const loadAvatar = async () => {
-  if (imageError.value) return
-  
-  const now = Date.now()
-  
-  // 如果有缓存且未过期，直接使用
-  if (avatarCache && (now - cacheTime) < CACHE_DURATION) {
-    avatarUrl.value = avatarCache
-    return
-  }
-  
+// 从localStorage读取（作为备选）
+const loadFromLocal = () => {
   try {
-    const profile = await userAPI.getProfile()
-    if (profile && profile.avatar) {
-      const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
-      avatarUrl.value = `${baseUrl}${profile.avatar}?t=${now}`
-      
-      // 更新缓存
-      avatarCache = avatarUrl.value
-      cacheTime = now
-      
-      // 同步更新localStorage
-      const user = JSON.parse(localStorage.getItem('user') || '{}')
-      user.avatar = profile.avatar
-      localStorage.setItem('user', JSON.stringify(user))
-    }
-  } catch (err) {
-    console.error('获取头像失败:', err)
-    // 尝试从localStorage读取
     const user = JSON.parse(localStorage.getItem('user') || '{}')
     if (user.avatar) {
       const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
-      avatarUrl.value = `${baseUrl}${user.avatar}?t=${now}`
-      avatarCache = avatarUrl.value
-      cacheTime = now
+      localUrl.value = `${baseUrl}${user.avatar}`
     }
+  } catch {
+    localUrl.value = ''
   }
 }
 
 const handleImageError = () => {
   imageError.value = true
-  avatarUrl.value = ''
-  avatarCache = null
 }
 
 onMounted(() => {
-  loadAvatar()
+  // 如果没传avatarUrl，从本地读取
+  if (!props.avatarUrl) {
+    loadFromLocal()
+  }
 })
-
-// 暴露刷新方法
-defineExpose({ loadAvatar })
 </script>
 
 <style scoped>

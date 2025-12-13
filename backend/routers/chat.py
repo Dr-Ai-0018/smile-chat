@@ -22,6 +22,26 @@ MEMORY_DIR = Path(__file__).parent.parent.parent / "memory" / "本体"
 
 # 记录用户最后活跃时间和消息计数（用于自动压缩）
 user_activity = {}
+# 记录用户的当前聊天请求，用于新消息到来时主动取消旧请求
+active_request_events = {}
+
+
+def register_request(user_id: int) -> asyncio.Event:
+    """为用户注册一个新的取消事件，并中断旧请求"""
+    old_event = active_request_events.get(user_id)
+    if old_event:
+        old_event.set()
+    
+    new_event = asyncio.Event()
+    active_request_events[user_id] = new_event
+    return new_event
+
+
+def clear_request(user_id: int, event: asyncio.Event):
+    """清理已完成的请求事件，避免误伤后续请求"""
+    current = active_request_events.get(user_id)
+    if current is event:
+        active_request_events.pop(user_id, None)
 
 def get_user_memory_dir(user_id: int) -> Path:
     """获取用户记忆目录，确保目录结构存在"""
@@ -98,6 +118,7 @@ async def send_message_with_context(
     db: Connection = Depends(get_db)
 ):
     """发送消息（带完整上下文，支持图片）"""
+    cancel_event = register_request(user_id)
     cursor = db.cursor()
     
     # 获取最后一条用户消息
@@ -121,8 +142,12 @@ async def send_message_with_context(
         # 调用AI服务
         response = await ai_service.chat_with_context(
             messages=[m.dict() for m in request.messages],
-            user_id=user_id
+            user_id=user_id,
+            cancel_event=cancel_event
         )
+        
+        if cancel_event.is_set():
+            raise asyncio.CancelledError("请求被新的消息中断")
         
         # 保存AI回复到数据库
         cursor.execute(
@@ -142,9 +167,12 @@ async def send_message_with_context(
             content=response["content"],
             timestamp=datetime.now()
         )
-    
+    except asyncio.CancelledError:
+        raise HTTPException(status_code=499, detail="请求已被新的消息取消")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"AI服务错误: {str(e)}")
+    finally:
+        clear_request(user_id, cancel_event)
 
 async def check_and_compress_memory(user_id: int, cursor, db):
     """检查并执行自动记忆压缩"""

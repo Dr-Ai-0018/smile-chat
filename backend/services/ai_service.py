@@ -2,6 +2,7 @@
 AI服务 - 调用多个AI API，支持自动切换
 支持图片消息、自动记忆压缩
 """
+import asyncio
 import httpx
 import json
 from pathlib import Path
@@ -80,11 +81,19 @@ class AIService:
         
         return ""
     
-    async def chat_with_context(self, messages: List[Dict], user_id: int) -> dict:
+    async def chat_with_context(
+        self,
+        messages: List[Dict],
+        user_id: int,
+        cancel_event: Optional[asyncio.Event] = None
+    ) -> dict:
         """
         带完整上下文的聊天
         messages格式: [{"role": "user/assistant", "content": "...", "image": "base64或null"}]
         """
+        if cancel_event and cancel_event.is_set():
+            raise asyncio.CancelledError("聊天请求已被新的消息中断")
+
         # 加载用户记忆
         user_memory = self.load_user_memory(user_id)
         
@@ -156,13 +165,20 @@ class AIService:
                 })
         
         # 调用API
-        return await self._call_api_with_fallback(api_messages)
+        return await self._call_api_with_fallback(api_messages, cancel_event)
     
-    async def _call_api_with_fallback(self, messages: List[Dict]) -> dict:
+    async def _call_api_with_fallback(
+        self,
+        messages: List[Dict],
+        cancel_event: Optional[asyncio.Event] = None
+    ) -> dict:
         """调用API，支持自动切换备份"""
         # 尝试主API
         try:
-            return await self._call_api(self.config["primary"], messages)
+            return await self._call_api(self.config["primary"], messages, cancel_event)
+        except asyncio.CancelledError:
+            # 新消息到来，主动取消当前请求
+            raise
         except Exception as e:
             print(f"主API调用失败: {e}")
             
@@ -170,17 +186,22 @@ class AIService:
             for backup in self.config.get("backup", []):
                 try:
                     print(f"切换到备份API: {backup['name']}")
-                    return await self._call_api(backup, messages)
+                    return await self._call_api(backup, messages, cancel_event)
                 except Exception as backup_e:
                     print(f"备份API {backup['name']} 调用失败: {backup_e}")
                     continue
             
             raise Exception("所有AI API均不可用")
     
-    async def _call_api(self, api_config: dict, messages: List[Dict]) -> dict:
+    async def _call_api(
+        self,
+        api_config: dict,
+        messages: List[Dict],
+        cancel_event: Optional[asyncio.Event] = None
+    ) -> dict:
         """调用单个API"""
         async with httpx.AsyncClient(timeout=120.0) as client:
-            response = await client.post(
+            request_coro = client.post(
                 f"{api_config['base_url']}/chat/completions",
                 headers={
                     "Authorization": f"Bearer {api_config['api_key']}",
@@ -193,6 +214,27 @@ class AIService:
                     "max_tokens": 2000
                 }
             )
+
+            if cancel_event:
+                api_task = asyncio.create_task(request_coro)
+                cancel_task = asyncio.create_task(cancel_event.wait())
+                done, _ = await asyncio.wait(
+                    {api_task, cancel_task},
+                    return_when=asyncio.FIRST_COMPLETED
+                )
+
+                if cancel_task in done:
+                    api_task.cancel()
+                    try:
+                        await api_task
+                    except asyncio.CancelledError:
+                        pass
+                    raise asyncio.CancelledError("AI调用在请求被替换后取消")
+
+                cancel_task.cancel()
+                response = await api_task
+            else:
+                response = await request_coro
             
             response.raise_for_status()
             result = response.json()
