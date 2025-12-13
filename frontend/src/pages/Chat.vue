@@ -74,7 +74,7 @@
                 </div>
               </div>
             </div>
-            <UserAvatar :size="40" />
+            <UserAvatar :size="40" :avatarUrl="userAvatarUrl" />
           </template>
         </div>
       </div>
@@ -162,7 +162,7 @@
 <script setup>
 import { ref, onMounted, nextTick, computed, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { chatAPI } from '../api'
+import { chatAPI, userAPI } from '../api'
 import { marked } from 'marked'
 import { toast, confirm } from '../utils/toast'
 import AiAvatar from '../components/AiAvatar.vue'
@@ -186,7 +186,10 @@ const previewImageUrl = ref(null)
 
 // 请求控制
 let currentAbortController = null
-let pendingMessage = null
+let hasPendingAfterStream = false
+
+// 用户头像URL（全页面共享，避免重复请求）
+const userAvatarUrl = ref('')
 
 // 计算是否可以发送（loading时也可以发，用于中断当前请求）
 const canSend = computed(() => {
@@ -266,7 +269,7 @@ const sendMessage = async (imageBase64 = null) => {
   // 情况2：AI正在流式输出
   // → 顺序处理，等AI输出完再发送
   if (isStreaming.value) {
-    pendingMessage = { text: textContent, image: imageBase64, alreadyAdded: true }
+    hasPendingAfterStream = true
     toast.info('消息已排队，等待当前回复完成')
     return
   }
@@ -311,31 +314,17 @@ const requestAIResponse = async () => {
     
     isStreaming.value = false
     
-    // 检查是否有排队的消息
-    if (pendingMessage) {
-      const pending = pendingMessage
-      pendingMessage = null
-      
-      // 如果消息还没添加过，才添加（alreadyAdded标记）
-      if (!pending.alreadyAdded) {
-        const pendingUserMsg = {
-          id: generateId(),
-          role: 'user',
-          content: pending.text,
-          image: pending.image,
-          timestamp: new Date()
-        }
-        messages.value.push(pendingUserMsg)
-        scrollToBottom()
-      }
-      
-      // 继续请求AI（消息已在messages里了）
+    // 如果期间有新的用户消息，按顺序在当前回复完成后再请求AI
+    if (hasPendingAfterStream) {
+      hasPendingAfterStream = false
       await requestAIResponse()
     }
     
   } catch (err) {
-    if (err.name === 'AbortError') {
-      console.log('请求已取消')
+    const status = err?.response?.status
+    const isCanceled = err?.code === 'ERR_CANCELED' || err?.name === 'AbortError'
+    if (isCanceled || status === 499) {
+      console.log('请求已取消/被新消息中断')
     } else {
       console.error('发送消息失败:', err)
       toast.error('消息发送失败，请重试')
@@ -506,8 +495,39 @@ const logout = async () => {
   }
 }
 
+// 同步用户头像（只请求一次，更新响应式变量）
+const syncUserAvatar = async () => {
+  const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
+  
+  // 先从localStorage读取，立即显示
+  try {
+    const storedUser = JSON.parse(localStorage.getItem('user') || '{}')
+    if (storedUser.avatar) {
+      userAvatarUrl.value = `${baseUrl}${storedUser.avatar}`
+    }
+  } catch {}
+  
+  // 然后请求profile更新（如果有变化）
+  try {
+    const profile = await userAPI.getProfile()
+    if (profile && profile.avatar) {
+      userAvatarUrl.value = `${baseUrl}${profile.avatar}`
+      
+      // 同步到localStorage
+      const storedUser = JSON.parse(localStorage.getItem('user') || '{}')
+      if (storedUser.avatar !== profile.avatar) {
+        storedUser.avatar = profile.avatar
+        localStorage.setItem('user', JSON.stringify(storedUser))
+      }
+    }
+  } catch {
+    // 静默失败，使用localStorage中的缓存
+  }
+}
+
 onMounted(async () => {
-  await loadHistory()
+  // 并行加载历史和同步头像
+  await Promise.all([loadHistory(), syncUserAvatar()])
   if (inputElement.value) {
     inputElement.value.focus()
   }
