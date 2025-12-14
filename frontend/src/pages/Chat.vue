@@ -164,6 +164,7 @@ import { ref, onMounted, nextTick, computed, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { chatAPI, userAPI } from '../api'
 import { marked } from 'marked'
+import DOMPurify from 'dompurify'
 import { toast, confirm } from '../utils/toast'
 import AiAvatar from '../components/AiAvatar.vue'
 import UserAvatar from '../components/UserAvatar.vue'
@@ -428,13 +429,14 @@ const isValidImage = (img) => {
   return img.startsWith('data:image') || img.startsWith('http')
 }
 
-// 渲染Markdown
+// 渲染Markdown (with XSS sanitization)
 const renderMarkdown = (content) => {
   if (!content) return ''
   try {
-    return marked(content, { breaks: true })
+    const html = marked(content, { breaks: true })
+    return DOMPurify.sanitize(html)
   } catch {
-    return content
+    return DOMPurify.sanitize(String(content))
   }
 }
 

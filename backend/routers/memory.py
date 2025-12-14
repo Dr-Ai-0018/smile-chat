@@ -9,8 +9,10 @@ from datetime import datetime
 from routers.user import get_current_user
 from models.schemas import MemoryUpdate
 from services.ai_service import AIService
+from services.memory_service import get_memory_service
 
 ai_service = AIService()
+memory_service = get_memory_service()
 
 router = APIRouter()
 
@@ -57,10 +59,9 @@ async def get_memory(
             memory_data["json"] = json.load(f)
     
     # 长期记忆
-    memory_file = memory_dir / "memory" / "long_term.txt"
-    if memory_file.exists():
-        with open(memory_file, "r", encoding="utf-8") as f:
-            memory_data["memory"] = f.read().split("\n\n")
+    ltm_text = memory_service.read_ltm_text(user_id)
+    if ltm_text:
+        memory_data["memory"] = ltm_text.split("\n\n")
     
     return memory_data
 
@@ -101,14 +102,13 @@ async def update_memory(
             raise HTTPException(status_code=400, detail="无效的JSON格式")
     
     elif update.memory_type == "memory":
-        # 更新长期记忆
-        memory_subdir = memory_dir / "memory"
-        memory_subdir.mkdir(exist_ok=True)
-        
-        memory_file = memory_subdir / "long_term.txt"
-        
-        with open(memory_file, "a", encoding="utf-8") as f:
-            f.write(f"\n\n{update.content}")
+        # 更新长期记忆（通过MemoryService，带版本管理）
+        existing = memory_service.read_ltm_text(update.user_id)
+        if existing and update.content:
+            merged = existing.rstrip() + "\n\n" + update.content
+        else:
+            merged = update.content
+        memory_service.write_ltm(update.user_id, merged, {"manual_update": True})
     
     else:
         raise HTTPException(status_code=400, detail="无效的记忆类型")

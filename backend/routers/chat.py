@@ -1,7 +1,7 @@
 """
 聊天路由 - AI对话功能
 """
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from pathlib import Path
 import json
 import asyncio
@@ -10,6 +10,7 @@ from typing import List, Optional
 from pydantic import BaseModel
 
 from routers.user import get_current_user
+from models.schemas import ChatResponse
 from services.ai_service import AIService
 from storage import JsonStorage
 
@@ -104,16 +105,10 @@ class MessageItem(BaseModel):
 class SendMessageRequest(BaseModel):
     messages: List[MessageItem]
 
-class ChatResponse(BaseModel):
-    role: str = "assistant"
+class LegacySendRequest(BaseModel):
     content: str
-    timestamp: datetime
-    # v2 fields
-    reply: Optional[str] = None
-    segments: Optional[List[str]] = None
-    meta: Optional[dict] = None
 
-@router.post("/send_with_context")
+@router.post("/send_with_context", response_model=ChatResponse, response_model_exclude_none=True)
 async def send_message_with_context(
     request: SendMessageRequest,
     user_id: int = Depends(get_current_user)
@@ -142,7 +137,7 @@ async def send_message_with_context(
     try:
         # 调用AI服务 (使用v2协议化接口)
         response = await ai_service.chat_with_context_v2(
-            messages=[m.dict() for m in request.messages],
+            messages=[m.model_dump() for m in request.messages],
             user_id=user_id,
             cancel_event=cancel_event
         )
@@ -151,6 +146,8 @@ async def send_message_with_context(
             raise asyncio.CancelledError("请求被新的消息中断")
         
         reply_content = response.get("reply", response.get("content", ""))
+        reply = response.get("reply") or reply_content
+        segments = response.get("segments") or ([reply] if reply else [])
         meta = response.get("meta", {})
         
         # 保存AI回复到JSON聊天历史（包含meta信息）
@@ -171,8 +168,8 @@ async def send_message_with_context(
             role="assistant",
             content=reply_content,
             timestamp=datetime.now(),
-            reply=response.get("reply"),
-            segments=response.get("segments"),
+            reply=reply,
+            segments=segments,
             meta=meta,
         )
     except asyncio.CancelledError:
@@ -253,11 +250,17 @@ async def get_history(
     return {"history": history}
 
 # 保留旧的send接口兼容
-@router.post("/send")
+@router.post("/send", response_model=ChatResponse, response_model_exclude_none=True)
 async def send_message(
-    content: str,
+    content: Optional[str] = Query(default=None),
+    body: Optional[LegacySendRequest] = Body(default=None),
     user_id: int = Depends(get_current_user)
 ):
     """发送聊天消息（旧接口，兼容）"""
-    request = SendMessageRequest(messages=[MessageItem(role="user", content=content)])
+    content_value = content
+    if content_value is None and body is not None:
+        content_value = body.content
+    if content_value is None:
+        raise HTTPException(status_code=400, detail="缺少content")
+    request = SendMessageRequest(messages=[MessageItem(role="user", content=content_value)])
     return await send_message_with_context(request, user_id)

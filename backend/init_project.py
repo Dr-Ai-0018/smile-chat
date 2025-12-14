@@ -2,17 +2,56 @@
 项目初始化脚本
 快速设置数据库和创建初始管理员邀请码
 """
+import argparse
+import shutil
+import sys
 import secrets
 from pathlib import Path
 
 from storage import JsonStorage
 
-def init_project():
+
+def reset_project_data(storage: JsonStorage) -> None:
+    base_dir = storage.base_dir
+    memory_dir = Path(__file__).parent.parent / "memory" / "本体"
+
+    if base_dir.exists():
+        for item in base_dir.iterdir():
+            if item.is_dir():
+                shutil.rmtree(item, ignore_errors=True)
+            else:
+                try:
+                    item.unlink(missing_ok=True)
+                except Exception:
+                    pass
+
+    if memory_dir.exists():
+        shutil.rmtree(memory_dir, ignore_errors=True)
+
+    JsonStorage(base_dir=base_dir)
+    memory_dir.mkdir(parents=True, exist_ok=True)
+
+
+def init_project(reset: bool = False, assume_yes: bool = False):
     print("=== Smile-Chat 项目初始化 ===\n")
     
     # 1. 初始化存储
     print("1. 初始化存储...")
     storage = JsonStorage()
+
+    if reset:
+        if not assume_yes:
+            confirm = input(
+                "将清空 backend/data/json 和 memory/本体 下的所有数据。\n"
+                "请输入 YES 确认继续: "
+            )
+            if confirm.strip() != "YES":
+                print("已取消")
+                sys.exit(1)
+
+        print("\n1.1 清空数据...")
+        reset_project_data(storage)
+        print("   ✓ 数据已清空")
     
     # 2. 创建管理员邀请码
     print("\n2. 创建管理员邀请码...")
@@ -66,10 +105,12 @@ def init_project():
     }
     
     config_file = config_dir / "api_channels.json"
-    with open(config_file, "w", encoding="utf-8") as f:
-        json.dump(api_config, f, ensure_ascii=False, indent=2)
-    
-    print(f"   ✓ API配置文件: {config_file}")
+    if not config_file.exists():
+        with open(config_file, "w", encoding="utf-8") as f:
+            json.dump(api_config, f, ensure_ascii=False, indent=2)
+        print(f"   ✓ API配置文件: {config_file}")
+    else:
+        print(f"   ✓ API配置文件已存在: {config_file}")
     
     # 5. 创建必要的目录
     print("\n5. 创建必要的目录...")
@@ -93,4 +134,8 @@ def init_project():
     print("\n" + "="*50)
 
 if __name__ == "__main__":
-    init_project()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--reset", action="store_true")
+    parser.add_argument("--yes", action="store_true")
+    args = parser.parse_args()
+    init_project(reset=args.reset, assume_yes=args.yes)

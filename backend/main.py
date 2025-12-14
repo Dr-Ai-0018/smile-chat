@@ -2,6 +2,8 @@
 AI聊天系统 - 后端主入口
 FastAPI + JWT认证 + SQLite数据库
 """
+import os
+import secrets
 from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -10,12 +12,65 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 import uvicorn
 
+from dotenv import load_dotenv
+
 from routers import auth, chat, user, memory, admin, image, config
 from utils.jwt import verify_token
+from utils.password import hash_password
+from storage import JsonStorage
+
+
+def _bootstrap_on_empty_data() -> None:
+    storage = JsonStorage()
+    users = storage.read_users()
+    if users:
+        return
+
+    invites = storage.read_invites()
+    has_unused_invite = any((not i.get("used")) for i in invites if isinstance(i, dict))
+
+    if not has_unused_invite:
+        configured = (os.getenv("INIT_ADMIN_INVITE_CODE") or "").strip()
+        admin_code = configured or ("smile-admin-" + secrets.token_urlsafe(8))
+        while True:
+            created = storage.create_invite_codes([admin_code])
+            if created:
+                break
+            admin_code = "smile-admin-" + secrets.token_urlsafe(8)
+
+        print("\n=== Bootstrap ===")
+        print(f"✓ 已生成管理员邀请码: {admin_code}")
+        print("提示：第一个注册的用户(ID=1)将拥有管理员权限。")
+        print("可选：在环境变量中设置 INIT_ADMIN_USERNAME / INIT_ADMIN_PASSWORD 以自动创建管理员账号。")
+        print("=================\n")
+    else:
+        admin_code = None
+
+    username = (os.getenv("INIT_ADMIN_USERNAME") or "").strip()
+    password = (os.getenv("INIT_ADMIN_PASSWORD") or "").strip()
+    if username and password:
+        if admin_code is None:
+            # 尝试复用任意一个可用邀请码
+            for i in storage.read_invites():
+                if isinstance(i, dict) and (not i.get("used")) and i.get("code"):
+                    admin_code = str(i.get("code"))
+                    break
+
+        if admin_code:
+            try:
+                storage.register_user(username, hash_password(password), admin_code)
+                print("\n=== Bootstrap ===")
+                print(f"✓ 已自动创建管理员账号: {username} (ID=1)")
+                print("=================\n")
+            except ValueError as e:
+                print(f"\nBootstrap 创建管理员账号失败: {e}\n")
 
 # 初始化数据库
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    load_dotenv()
+    if (os.getenv("BOOTSTRAP_ON_STARTUP", "1").strip().lower() not in {"0", "false", "no"}):
+        _bootstrap_on_empty_data()
     yield
 
 app = FastAPI(
