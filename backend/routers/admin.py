@@ -13,9 +13,11 @@ from models.schemas import InviteCodeCreate, PasswordReset
 from utils.password import hash_password
 from routers.user import get_current_user
 from storage import JsonStorage
+from services.memory_service import get_memory_service
 
 router = APIRouter()
 storage = JsonStorage()
+memory_service = get_memory_service()
 
 MEMORY_BASE_PATH = Path(__file__).parent.parent.parent / "memory" / "本体"
 
@@ -84,10 +86,8 @@ async def get_user_memory(
         "history_files": []
     }
     
-    # 读取长期记忆
-    long_term_file = memory_dir / "memory" / "long_term.txt"
-    if long_term_file.exists():
-        memory_data["long_term"] = long_term_file.read_text(encoding="utf-8")
+    # 读取长期记忆（通过MemoryService）
+    memory_data["long_term"] = memory_service.read_ltm_text(user_id)
     
     # 读取JSON记忆
     json_file = memory_dir / "json" / "memory.json"
@@ -208,13 +208,11 @@ async def list_all_memory(
             "long_term_preview": ""
         }
         
-        # 检查长期记忆
-        long_term_file = memory_dir / "memory" / "long_term.txt"
-        if long_term_file.exists():
-            content = long_term_file.read_text(encoding="utf-8").strip()
-            if content:
-                user_memory["has_long_term"] = True
-                user_memory["long_term_preview"] = content[:200] + "..." if len(content) > 200 else content
+        # 检查长期记忆（通过MemoryService）
+        content = memory_service.read_ltm_text(user_id).strip()
+        if content:
+            user_memory["has_long_term"] = True
+            user_memory["long_term_preview"] = content[:200] + "..." if len(content) > 200 else content
         
         # 检查JSON记忆
         json_file = memory_dir / "json" / "memory.json"
@@ -243,11 +241,7 @@ async def update_user_long_term_memory(
     if not storage.get_user_by_id(user_id):
         raise HTTPException(status_code=404, detail="用户不存在")
     
-    memory_dir = MEMORY_BASE_PATH / str(user_id) / "memory"
-    memory_dir.mkdir(parents=True, exist_ok=True)
-    
-    long_term_file = memory_dir / "long_term.txt"
-    long_term_file.write_text(request.content, encoding="utf-8")
+    memory_service.write_ltm(user_id, request.content, {"admin_edit": True})
     
     return {"message": "记忆更新成功"}
 
@@ -270,6 +264,7 @@ async def clear_user_memory(
     (memory_dir / "history").mkdir(parents=True, exist_ok=True)
     (memory_dir / "json").mkdir(parents=True, exist_ok=True)
     (memory_dir / "memory").mkdir(parents=True, exist_ok=True)
+    (memory_dir / "ltm").mkdir(parents=True, exist_ok=True)
     
     return {"message": "记忆已清空"}
 

@@ -51,7 +51,7 @@ async def update_context_config(
         raise HTTPException(status_code=400, detail="Token数必须在500-32000之间")
     
     with open(config_file, "w", encoding="utf-8") as f:
-        json.dump(config.dict(), f, ensure_ascii=False, indent=2)
+        json.dump(config.model_dump(), f, ensure_ascii=False, indent=2)
     
     return {"message": "配置更新成功", "config": config}
 

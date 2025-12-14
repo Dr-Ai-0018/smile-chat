@@ -31,6 +31,9 @@ class ChatResponse(BaseModel):
     content: str
     sentences: Optional[List[str]] = None
     timestamp: datetime
+    reply: Optional[str] = None
+    segments: Optional[List[str]] = None
+    meta: Optional[dict] = None
 
 # 用户相关
 class UserProfile(BaseModel):
