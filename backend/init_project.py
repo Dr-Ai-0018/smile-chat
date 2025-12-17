@@ -87,7 +87,7 @@ def init_project(reset: bool = False, assume_yes: bool = False):
         "primary": {
             "name": "OpenAI",
             "base_url": "https://api.openai.com/v1",
-            "api_key": "your-openai-api-key-here",
+            "api_key_env": "OPENAI_API_KEY",
             "model": "gpt-3.5-turbo",
             "price": "$0.002/1K tokens"
         },
@@ -95,7 +95,7 @@ def init_project(reset: bool = False, assume_yes: bool = False):
             {
                 "name": "Azure OpenAI",
                 "base_url": "https://your-resource.openai.azure.com",
-                "api_key": "your-azure-api-key-here",
+                "api_key_env": "AZURE_OPENAI_API_KEY",
                 "model": "gpt-35-turbo",
                 "price": "$0.002/1K tokens"
             }

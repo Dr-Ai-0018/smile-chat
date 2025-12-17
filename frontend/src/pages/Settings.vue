@@ -97,13 +97,11 @@ const loading = ref(false)
 const loadingText = ref('')
 const fileInput = ref(null)
 
-// 计算头像URL（添加时间戳防止缓存）
+// 计算头像URL
 const avatarUrl = computed(() => {
   if (!profile.value.avatar) return ''
-  // 添加时间戳参数强制刷新
-  const timestamp = Date.now()
   const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
-  return `${baseUrl}${profile.value.avatar}?t=${timestamp}`
+  return `${baseUrl}${profile.value.avatar}`
 })
 
 // 加载用户信息

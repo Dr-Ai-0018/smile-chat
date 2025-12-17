@@ -122,9 +122,22 @@ class ResponseParser:
     def _fallback(self, content: str, last_stage: str, error: str) -> ParsedResponse:
         """降级策略"""
         reply = content.strip() if content else ""
+
+        segments: list[str] = []
+        if reply:
+            # 先按空行分段（markdown 段落）
+            blocks = [b.strip() for b in re.split(r"\n\s*\n+", reply) if b and b.strip()]
+            for b in blocks:
+                # 再按中文句末标点拆分，尽量保留 ? ! 等语气
+                parts = re.split(r"(?<=[。！？!?])\s*", b)
+                for p in parts:
+                    p = p.strip()
+                    if p:
+                        segments.append(p)
+
         return ParsedResponse(
             reply=reply,
-            segments=[reply] if reply else [],
+            segments=segments if segments else ([reply] if reply else []),
             did_self_disclosure=False,
             relationship_stage_judge=last_stage,
             raw_content=content,
