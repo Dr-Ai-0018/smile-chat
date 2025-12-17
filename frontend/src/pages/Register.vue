@@ -35,7 +35,7 @@
           />
         </div>
         
-        <div class="form-group">
+        <div v-if="inviteCodeRequired" class="form-group">
           <input
             v-model="form.inviteCode"
             type="text"
@@ -61,7 +61,7 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { authAPI } from '../api'
 
@@ -76,6 +76,19 @@ const form = ref({
 
 const loading = ref(false)
 const error = ref('')
+const inviteCodeRequired = ref(true)
+
+// 检查邀请码系统是否启用
+const checkInviteCodeStatus = async () => {
+  try {
+    const res = await authAPI.getInviteCodeStatus()
+    inviteCodeRequired.value = res.invite_code_enabled
+  } catch (err) {
+    console.error('获取邀请码状态失败:', err)
+    // 默认需要邀请码
+    inviteCodeRequired.value = true
+  }
+}
 
 const handleRegister = async () => {
   // 验证密码匹配
@@ -91,7 +104,7 @@ const handleRegister = async () => {
     const response = await authAPI.register(
       form.value.username,
       form.value.password,
-      form.value.inviteCode
+      inviteCodeRequired.value ? form.value.inviteCode : null
     )
     
     // 保存token和用户信息
@@ -109,6 +122,10 @@ const handleRegister = async () => {
     loading.value = false
   }
 }
+
+onMounted(() => {
+  checkInviteCodeStatus()
+})
 </script>
 
 <style scoped>

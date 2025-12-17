@@ -10,6 +10,7 @@ import json
 from datetime import datetime
 
 from models.schemas import InviteCodeCreate, PasswordReset
+from pydantic import BaseModel as PydanticBaseModel
 from utils.password import hash_password
 from routers.user import get_current_user
 from storage import JsonStorage
@@ -348,4 +349,30 @@ async def get_system_stats(
         "today_messages": today_msg_count,
         "active_users_today": active_users,
         "available_invites": available_invites
+    }
+
+# ==================== 邀请码开关 ====================
+class InviteCodeToggleRequest(PydanticBaseModel):
+    enabled: bool
+
+@router.get("/settings/invite_code")
+async def get_invite_code_setting(
+    admin_id: int = Depends(is_admin),
+):
+    """获取邀请码开关状态"""
+    settings = storage.get_settings()
+    return {
+        "invite_code_enabled": settings.get("invite_code_enabled", True)
+    }
+
+@router.post("/settings/invite_code")
+async def set_invite_code_setting(
+    req: InviteCodeToggleRequest,
+    admin_id: int = Depends(is_admin),
+):
+    """设置邀请码开关状态"""
+    settings = storage.update_settings({"invite_code_enabled": req.enabled})
+    return {
+        "invite_code_enabled": settings.get("invite_code_enabled", True),
+        "message": "邀请码已" + ("启用" if req.enabled else "关闭")
     }

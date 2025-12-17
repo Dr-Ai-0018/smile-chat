@@ -5,10 +5,17 @@
       <button class="menu-btn" @click="showMenu = !showMenu">
         <span class="menu-icon">☰</span>
       </button>
-      <h1 class="title">
-        启明
-        <span v-if="isTyping" class="typing-indicator">正在输入中...</span>
-      </h1>
+      <div class="header-center">
+        <h1 class="title">
+          启明
+          <span v-if="isTyping" class="typing-indicator">正在输入中...</span>
+        </h1>
+      </div>
+      <!-- 计时器显示 -->
+      <div v-if="chatStartTime" class="timer-display" :class="{ warning: showTimeWarning }">
+        <span class="timer-icon">⏱</span>
+        <span class="timer-value">{{ formatRemainingTime() }}</span>
+      </div>
       <button class="settings-btn" @click="$router.push('/settings')">
         <span>⚙</span>
       </button>
@@ -156,6 +163,28 @@
         <button class="close-preview" @click="previewImageUrl = null">×</button>
       </div>
     </Transition>
+
+    <!-- 计时器提示气泡 -->
+    <Transition name="slide-up">
+      <div v-if="showTimeWarning && !chatEnded" class="time-warning-bubble">
+        <span class="warning-icon">⏰</span>
+        <span class="warning-text">聊天即将结束</span>
+        <span class="warning-time">{{ formatRemainingTime() }}</span>
+      </div>
+    </Transition>
+
+    <!-- 聊天结束遮罩 -->
+    <Transition name="fade">
+      <div v-if="chatEnded" class="chat-ended-overlay">
+        <div class="ended-card">
+          <div class="ended-icon">🌙</div>
+          <h2>今日聊天时间已结束</h2>
+          <p>感谢你今天的陪伴，明天再来和我聊天吧~</p>
+          <p class="ended-hint">每天的聊天时间为16分钟</p>
+          <button class="ended-btn" @click="$router.push('/settings')">去设置页面</button>
+        </div>
+      </div>
+    </Transition>
   </div>
 </template>
 
@@ -192,6 +221,15 @@ let hasPendingAfterStream = false
 // 用户头像URL（全页面共享，避免重复请求）
 const userAvatarUrl = ref('')
 
+// 聊天计时系统
+const CHAT_DURATION_WARNING = 15 * 60 * 1000  // 15分钟提示
+const CHAT_DURATION_LIMIT = 16 * 60 * 1000    // 16分钟强制结束
+const chatStartTime = ref(null)
+const chatElapsedTime = ref(0)
+const showTimeWarning = ref(false)
+const chatEnded = ref(false)
+let timerInterval = null
+
 // 计算是否可以发送（loading时也可以发，用于中断当前请求）
 const canSend = computed(() => {
   return inputMessage.value.trim().length > 0
@@ -210,6 +248,90 @@ const currentGreeting = computed(() => {
 
 // 生成消息ID
 const generateId = () => Date.now().toString(36) + Math.random().toString(36).substr(2)
+
+// ==================== 聊天计时系统 ====================
+const getTimerStorageKey = () => `chat_timer_${user.value.id}`
+
+const loadTimerState = () => {
+  const key = getTimerStorageKey()
+  const stored = localStorage.getItem(key)
+  if (stored) {
+    try {
+      const data = JSON.parse(stored)
+      // 检查是否是今天的记录（每天重置）
+      const storedDate = new Date(data.startTime).toDateString()
+      const today = new Date().toDateString()
+      if (storedDate === today) {
+        chatStartTime.value = data.startTime
+        // 计算已过时间
+        const elapsed = Date.now() - data.startTime
+        if (elapsed >= CHAT_DURATION_LIMIT) {
+          chatEnded.value = true
+        }
+        return true
+      } else {
+        // 新的一天，清除旧记录
+        localStorage.removeItem(key)
+      }
+    } catch (e) {
+      localStorage.removeItem(key)
+    }
+  }
+  return false
+}
+
+const saveTimerState = () => {
+  if (chatStartTime.value) {
+    const key = getTimerStorageKey()
+    localStorage.setItem(key, JSON.stringify({
+      startTime: chatStartTime.value
+    }))
+  }
+}
+
+const startChatTimer = () => {
+  if (chatStartTime.value) return // 已经开始了
+  
+  chatStartTime.value = Date.now()
+  saveTimerState()
+  startTimerInterval()
+}
+
+const startTimerInterval = () => {
+  if (timerInterval) return
+  
+  timerInterval = setInterval(() => {
+    if (!chatStartTime.value) return
+    
+    chatElapsedTime.value = Date.now() - chatStartTime.value
+    
+    // 15分钟提示
+    if (chatElapsedTime.value >= CHAT_DURATION_WARNING && !showTimeWarning.value && !chatEnded.value) {
+      showTimeWarning.value = true
+      toast.info('聊天即将结束，还有约1分钟哦~', 5000)
+    }
+    
+    // 16分钟强制结束
+    if (chatElapsedTime.value >= CHAT_DURATION_LIMIT && !chatEnded.value) {
+      chatEnded.value = true
+      stopTimerInterval()
+    }
+  }, 1000)
+}
+
+const stopTimerInterval = () => {
+  if (timerInterval) {
+    clearInterval(timerInterval)
+    timerInterval = null
+  }
+}
+
+const formatRemainingTime = () => {
+  const remaining = Math.max(0, CHAT_DURATION_LIMIT - chatElapsedTime.value)
+  const minutes = Math.floor(remaining / 60000)
+  const seconds = Math.floor((remaining % 60000) / 1000)
+  return `${minutes}:${seconds.toString().padStart(2, '0')}`
+}
 
 const normalizeSegment = (content) => {
   if (!content) return ''
@@ -237,10 +359,21 @@ const loadHistory = async () => {
 
 // 发送消息（核心逻辑）
 const sendMessage = async (imageBase64 = null) => {
+  // 检查聊天是否已结束
+  if (chatEnded.value) {
+    toast.error('今日聊天时间已用完，明天再来吧~')
+    return
+  }
+  
   const textContent = inputMessage.value.trim()
   
   // 如果没有内容和图片，直接返回
   if (!textContent && !imageBase64) return
+  
+  // 第一次发送消息时启动计时器
+  if (!chatStartTime.value) {
+    startChatTimer()
+  }
   
   // 清空输入
   inputMessage.value = ''
@@ -561,6 +694,12 @@ const syncUserAvatar = async () => {
 }
 
 onMounted(async () => {
+  // 加载计时器状态
+  loadTimerState()
+  if (chatStartTime.value && !chatEnded.value) {
+    startTimerInterval()
+  }
+  
   // 并行加载历史和同步头像
   await Promise.all([loadHistory(), syncUserAvatar()])
   if (inputElement.value) {
@@ -573,6 +712,8 @@ onUnmounted(() => {
   if (currentAbortController) {
     currentAbortController.abort()
   }
+  // 清理计时器
+  stopTimerInterval()
 })
 </script>
 
@@ -634,6 +775,41 @@ onUnmounted(() => {
 .menu-btn:hover, .settings-btn:hover {
   background: rgba(0, 0, 0, 0.05);
   border-radius: 8px;
+}
+
+/* 计时器显示 */
+.timer-display {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  background: rgba(0, 0, 0, 0.08);
+  padding: 0.4rem 0.75rem;
+  border-radius: 20px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--color-dark);
+  transition: all 0.3s ease;
+}
+
+.timer-display.warning {
+  background: linear-gradient(135deg, #ff6b6b, #ee5a5a);
+  color: white;
+  animation: timer-pulse 1s ease-in-out infinite;
+}
+
+@keyframes timer-pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.05); }
+}
+
+.timer-icon {
+  font-size: 1rem;
+}
+
+.timer-value {
+  font-family: 'JetBrains Mono', monospace;
+  min-width: 45px;
+  text-align: center;
 }
 
 /* 侧边栏 */
@@ -1148,6 +1324,117 @@ onUnmounted(() => {
 
 .fade-enter-from, .fade-leave-to {
   opacity: 0;
+}
+
+/* 计时器提示气泡 */
+.time-warning-bubble {
+  position: fixed;
+  bottom: 120px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: linear-gradient(135deg, #FDD152, #F4A500);
+  color: #333;
+  padding: 0.75rem 1.25rem;
+  border-radius: 50px;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  box-shadow: 0 4px 20px rgba(244, 165, 0, 0.4);
+  z-index: 100;
+  font-weight: 500;
+}
+
+.warning-icon {
+  font-size: 1.2rem;
+}
+
+.warning-text {
+  font-size: 0.95rem;
+}
+
+.warning-time {
+  background: rgba(255, 255, 255, 0.9);
+  padding: 0.25rem 0.5rem;
+  border-radius: 20px;
+  font-weight: 700;
+  font-size: 0.9rem;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.slide-up-enter-active, .slide-up-leave-active {
+  transition: all 0.3s ease;
+}
+
+.slide-up-enter-from, .slide-up-leave-to {
+  opacity: 0;
+  transform: translate(-50%, 20px);
+}
+
+/* 聊天结束遮罩 */
+.chat-ended-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.85);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  backdrop-filter: blur(8px);
+}
+
+.ended-card {
+  background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+  border-radius: 24px;
+  padding: 3rem;
+  text-align: center;
+  max-width: 400px;
+  border: 2px solid rgba(253, 209, 82, 0.3);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+
+.ended-icon {
+  font-size: 4rem;
+  margin-bottom: 1rem;
+}
+
+.ended-card h2 {
+  color: #FDD152;
+  margin: 0 0 1rem 0;
+  font-size: 1.5rem;
+}
+
+.ended-card p {
+  color: rgba(255, 255, 255, 0.8);
+  margin: 0 0 0.5rem 0;
+  font-size: 1rem;
+  line-height: 1.6;
+}
+
+.ended-hint {
+  color: rgba(255, 255, 255, 0.5) !important;
+  font-size: 0.85rem !important;
+  margin-top: 1rem !important;
+}
+
+.ended-btn {
+  margin-top: 1.5rem;
+  background: linear-gradient(135deg, #FDD152, #F4A500);
+  color: #1a1a2e;
+  border: none;
+  padding: 0.875rem 2rem;
+  border-radius: 50px;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.ended-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 20px rgba(253, 209, 82, 0.4);
 }
 
 /* 移动端适配 */

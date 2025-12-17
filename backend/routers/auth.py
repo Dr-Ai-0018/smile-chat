@@ -12,13 +12,28 @@ from storage import JsonStorage
 router = APIRouter()
 storage = JsonStorage()
 
+@router.get("/invite_code_status")
+async def get_invite_code_status():
+    """获取邀请码系统状态（公开接口）"""
+    return {"invite_code_enabled": storage.is_invite_code_enabled()}
+
 @router.post("/register", response_model=TokenResponse)
 async def register(req: RegisterRequest):
     """用户注册"""
     pwd_hash = hash_password(req.password)
+    
+    # 检查邀请码系统是否启用
+    invite_enabled = storage.is_invite_code_enabled()
 
     try:
-        user = storage.register_user(req.username, pwd_hash, req.invite_code)
+        if invite_enabled:
+            # 邀请码启用时，必须提供有效邀请码
+            if not req.invite_code:
+                raise HTTPException(status_code=400, detail="请提供邀请码")
+            user = storage.register_user(req.username, pwd_hash, req.invite_code)
+        else:
+            # 邀请码关闭时，使用no_code注册
+            user = storage.register_user_no_invite(req.username, pwd_hash)
     except ValueError as e:
         if str(e) == "invalid_invite":
             raise HTTPException(status_code=400, detail="邀请码无效或已使用")
