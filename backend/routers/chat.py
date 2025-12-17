@@ -149,17 +149,34 @@ async def send_message_with_context(
         reply = response.get("reply") or reply_content
         segments = response.get("segments") or ([reply] if reply else [])
         meta = response.get("meta", {})
-        
-        # 保存AI回复到JSON聊天历史（包含meta信息）
-        storage.append_chat_message(
-            user_id=user_id,
-            role="assistant",
-            content=reply_content,
-            meta=meta,
-        )
-        
-        # 同时保存AI回复到Memory文件系统
-        save_message_to_history(user_id, "assistant", reply_content)
+
+        # 保存AI回复到JSON聊天历史：按 segments 分条存储，避免刷新后合并
+        total_segments = len(segments) if isinstance(segments, list) else 0
+        if not isinstance(segments, list) or total_segments == 0:
+            segments = [reply_content] if reply_content else []
+            total_segments = len(segments)
+
+        ts = datetime.now().isoformat()
+        for idx, seg in enumerate(segments):
+            seg_text = (str(seg) if seg is not None else "").strip()
+            if seg_text.endswith("。"):
+                seg_text = seg_text[:-1]
+            if not seg_text:
+                continue
+
+            seg_meta = dict(meta) if isinstance(meta, dict) else {}
+            seg_meta["segment_index"] = idx
+            seg_meta["segment_total"] = total_segments
+
+            storage.append_chat_message(
+                user_id=user_id,
+                role="assistant",
+                content=seg_text,
+                timestamp=ts,
+                meta=seg_meta,
+            )
+
+            save_message_to_history(user_id, "assistant", seg_text)
         
         # 自动记忆压缩逻辑
         await check_and_compress_memory(user_id)

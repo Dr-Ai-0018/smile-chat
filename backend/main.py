@@ -14,6 +14,9 @@ import uvicorn
 
 from dotenv import load_dotenv
 
+# 必须在导入 routers/AIService 之前加载 .env，否则配置会在 import 时读取不到
+load_dotenv()
+
 from routers import auth, chat, user, memory, admin, image, config
 from utils.jwt import verify_token
 from utils.password import hash_password
@@ -68,7 +71,6 @@ def _bootstrap_on_empty_data() -> None:
 # 初始化数据库
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    load_dotenv()
     if (os.getenv("BOOTSTRAP_ON_STARTUP", "1").strip().lower() not in {"0", "false", "no"}):
         _bootstrap_on_empty_data()
     yield
@@ -104,6 +106,14 @@ UPLOADS_DIR.mkdir(exist_ok=True)
 (UPLOADS_DIR / "avatars").mkdir(exist_ok=True)
 (UPLOADS_DIR / "latest").mkdir(exist_ok=True)
 app.mount("/uploads", StaticFiles(directory=str(UPLOADS_DIR)), name="uploads")
+app.mount("/avatars", StaticFiles(directory=str(UPLOADS_DIR / "avatars")), name="avatars")
+
+@app.middleware("http")
+async def add_static_cache_headers(request, call_next):
+    response = await call_next(request)
+    if request.url.path.startswith("/uploads/avatars/") or request.url.path.startswith("/avatars/"):
+        response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    return response
 
 @app.get("/")
 async def root():

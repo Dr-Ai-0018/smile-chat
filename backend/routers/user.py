@@ -4,6 +4,7 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Header
 from pathlib import Path
 import shutil
+import time
 from typing import Optional
 
 from models.schemas import UserProfile
@@ -55,13 +56,26 @@ async def upload_avatar(
     
     # 保存文件
     file_ext = file.filename.split(".")[-1]
-    file_path = UPLOAD_DIR / f"{user_id}.{file_ext}"
+
+    old = storage.get_user_by_id(user_id) or {}
+    old_avatar = old.get("avatar") or ""
+    if isinstance(old_avatar, str) and old_avatar.startswith("/uploads/avatars/"):
+        try:
+            old_name = old_avatar.split("/uploads/avatars/", 1)[1]
+            old_path = UPLOAD_DIR / old_name
+            if old_path.exists():
+                old_path.unlink()
+        except Exception:
+            pass
+
+    version = int(time.time())
+    file_path = UPLOAD_DIR / f"{user_id}_{version}.{file_ext}"
     
     with open(file_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
     
     # 更新存储
-    avatar_url = f"/uploads/avatars/{user_id}.{file_ext}"
+    avatar_url = f"/uploads/avatars/{user_id}_{version}.{file_ext}"
     updated = storage.update_user(user_id, {"avatar": avatar_url})
     if not updated:
         raise HTTPException(status_code=404, detail="用户不存在")

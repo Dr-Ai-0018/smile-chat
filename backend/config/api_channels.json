@@ -1,19 +1,20 @@
 {
   "primary": {
-    "name": "OpenAI",
-    "base_url": "https://api.killerbest.com/v1",
-    "api_key_env": "OPENAI_API_KEY",
-    "model": "load-gpt-4.1-mini",
+    "name_env": "AI_PRIMARY_NAME",
+    "base_url_env": "AI_PRIMARY_BASE_URL",
+    "model_env": "AI_PRIMARY_MODEL",
+    "api_key_env": "AI_PRIMARY_KEY",
     "price": "$0.002/1K tokens"
   },
   "backup": [
     {
-      "name": "Azure OpenAI",
-      "base_url": "https://your-resource.openai.azure.com",
-      "api_key_env": "AZURE_OPENAI_API_KEY",
-      "model": "gpt-35-turbo",
+      "name_env": "AI_BACKUP_NAME",
+      "base_url_env": "AI_BACKUP_BASE_URL",
+      "api_key_env": "AI_BACKUP_KEY",
+      "model_env": "AI_BACKUP_MODEL",
       "price": "$0.002/1K tokens"
     }
   ],
   "enable_search": true
 }
+

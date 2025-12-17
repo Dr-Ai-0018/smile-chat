@@ -67,6 +67,7 @@ class ChatLogger:
         parse_error: Optional[str] = None,
         latency_ms: Optional[int] = None,
         model: Optional[str] = None,
+        reasoning_content: str = "",
     ):
         """记录响应信息"""
         log_entry = {
@@ -75,6 +76,7 @@ class ChatLogger:
             "timestamp": datetime.now().isoformat(),
             "type": "response",
             "raw_content_preview": raw_content[:500] if raw_content else "",
+            "reasoning_content_preview": reasoning_content[:500] if reasoning_content else "",
             "parsed_reply_preview": parsed_reply[:200] if parsed_reply else "",
             "segments_count": len(segments) if segments else 0,
             "did_self_disclosure": did_self_disclosure,

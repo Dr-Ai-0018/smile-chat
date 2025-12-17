@@ -211,6 +211,11 @@ const currentGreeting = computed(() => {
 // 生成消息ID
 const generateId = () => Date.now().toString(36) + Math.random().toString(36).substr(2)
 
+const normalizeSegment = (content) => {
+  if (!content) return ''
+  return String(content).replace(/。\s*$/, '')
+}
+
 // 加载聊天历史
 const loadHistory = async () => {
   try {
@@ -300,18 +305,35 @@ const requestAIResponse = async () => {
     loading.value = false
     isTyping.value = false
     
-    // 添加AI回复消息
-    const aiMsg = {
-      id: generateId(),
-      role: 'assistant',
-      content: '',
-      timestamp: new Date()
-    }
-    messages.value.push(aiMsg)
-    const msgIndex = messages.value.length - 1
+    // 检查是否有 segments（多条消息分开显示）
+    const segments = response.segments && response.segments.length > 0
+      ? response.segments
+      : [response.reply || response.content || '']
     
-    // 流式渲染
-    await streamRenderMessage(response.content, msgIndex)
+    // 逐条显示每个 segment
+    for (let i = 0; i < segments.length; i++) {
+      let segmentContent = segments[i]
+      if (!segmentContent) continue
+      segmentContent = normalizeSegment(segmentContent)
+      
+      // 添加AI回复消息
+      const aiMsg = {
+        id: generateId(),
+        role: 'assistant',
+        content: '',
+        timestamp: new Date()
+      }
+      messages.value.push(aiMsg)
+      const msgIndex = messages.value.length - 1
+      
+      // 流式渲染当前 segment
+      await streamRenderMessage(segmentContent, msgIndex)
+      
+      // 如果还有下一条，稍作停顿（模拟多条消息发送）
+      if (i < segments.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, 400))
+      }
+    }
     
     isStreaming.value = false
     
@@ -324,8 +346,19 @@ const requestAIResponse = async () => {
   } catch (err) {
     const status = err?.response?.status
     const isCanceled = err?.code === 'ERR_CANCELED' || err?.name === 'AbortError'
+    const isTimeout = err?.code === 'ECONNABORTED' || /timeout/i.test(err?.message || '')
+    const isNetworkError = !status && (err?.code === 'ERR_NETWORK' || /network error/i.test(err?.message || ''))
     if (isCanceled || status === 499) {
       console.log('请求已取消/被新消息中断')
+    } else if (isTimeout || isNetworkError) {
+      const reason = isTimeout ? '超时' : '网络异常'
+      console.error(`请求${reason}:`, err)
+      toast.error(`等待回复${reason}，已自动刷新对话历史`)
+      try {
+        await loadHistory()
+      } catch (refreshErr) {
+        console.error(`${reason}后刷新历史失败:`, refreshErr)
+      }
     } else {
       console.error('发送消息失败:', err)
       toast.error('消息发送失败，请重试')

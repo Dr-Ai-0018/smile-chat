@@ -31,6 +31,104 @@ class AIService:
         self.chat_logger = get_chat_logger()
         self.config = self._load_config()
         self.context_config = self._load_context_config()
+
+    def _resolve_channel_env(self, channel: dict) -> dict:
+        if not isinstance(channel, dict):
+            return {}
+
+        def _apply(value_key: str, env_key: str) -> None:
+            env_var = channel.get(env_key)
+            if isinstance(env_var, str) and env_var.strip():
+                v = (os.getenv(env_var.strip()) or "").strip()
+                if v:
+                    channel[value_key] = v
+
+        _apply("name", "name_env")
+        _apply("base_url", "base_url_env")
+        _apply("model", "model_env")
+        # api_key 已通过 api_key_env/api_key 处理（见 _get_api_key）
+        return channel
+
+    def _resolve_config_env_indirection(self, config: dict) -> dict:
+        if not isinstance(config, dict):
+            config = {}
+
+        primary = config.get("primary")
+        if not isinstance(primary, dict):
+            primary = {}
+            config["primary"] = primary
+        self._resolve_channel_env(primary)
+
+        backups = config.get("backup")
+        if isinstance(backups, list):
+            for b in backups:
+                if isinstance(b, dict):
+                    self._resolve_channel_env(b)
+
+        return config
+
+    def _apply_env_overrides(self, config: dict) -> dict:
+        primary = config.get("primary")
+        if not isinstance(primary, dict):
+            primary = {}
+            config["primary"] = primary
+
+        def _env(name: str) -> str:
+            return (os.getenv(name) or "").strip()
+
+        v = _env("AI_PRIMARY_NAME")
+        if v:
+            primary["name"] = v
+
+        v = _env("AI_PRIMARY_BASE_URL")
+        if v:
+            primary["base_url"] = v
+
+        v = _env("AI_PRIMARY_MODEL")
+        if v:
+            primary["model"] = v
+
+        v = _env("AI_PRIMARY_API_KEY_ENV")
+        if v:
+            primary["api_key_env"] = v
+
+        v = _env("AI_PRIMARY_API_KEY")
+        if v:
+            primary["api_key"] = v
+
+        v = _env("AI_ENABLE_SEARCH")
+        if v.lower() in {"1", "true", "yes"}:
+            config["enable_search"] = True
+        elif v.lower() in {"0", "false", "no"}:
+            config["enable_search"] = False
+
+        v = _env("AI_MAX_CONTEXT_MESSAGES")
+        if v.isdigit():
+            config["max_context_messages"] = int(v)
+
+        v = _env("AI_IMAGE_CONTEXT_ROUNDS")
+        if v.isdigit():
+            config["image_context_rounds"] = int(v)
+
+        return config
+
+    def _apply_env_overrides_context(self, config: dict) -> dict:
+        def _env(name: str) -> str:
+            return (os.getenv(name) or "").strip()
+
+        v = _env("AI_CONTEXT_MAX_MESSAGES")
+        if v.isdigit():
+            config["max_messages"] = int(v)
+
+        v = _env("AI_CONTEXT_MAX_TOKENS")
+        if v.isdigit():
+            config["max_tokens"] = int(v)
+
+        v = _env("AI_CONTEXT_IMAGE_ROUNDS")
+        if v.isdigit():
+            config["image_rounds"] = int(v)
+
+        return config
     
     def _load_config(self) -> dict:
         """加载API配置"""
@@ -40,7 +138,7 @@ class AIService:
                 "primary": {
                     "name": "OpenAI",
                     "base_url": "https://api.openai.com/v1",
-                    "api_key": "your-api-key",
+                    "api_key_env": "OPENAI_API_KEY",
                     "model": "gpt-4o-mini",
                     "price": "$0.002/1K tokens"
                 },
@@ -54,10 +152,15 @@ class AIService:
             with open(self.config_path, "w", encoding="utf-8") as f:
                 json.dump(default_config, f, ensure_ascii=False, indent=2)
             
-            return default_config
+            config = self._resolve_config_env_indirection(default_config)
+            return self._apply_env_overrides(config)
         
         with open(self.config_path, "r", encoding="utf-8") as f:
-            return json.load(f)
+            config = json.load(f)
+        if not isinstance(config, dict):
+            config = {}
+        config = self._resolve_config_env_indirection(config)
+        return self._apply_env_overrides(config)
     
     def _load_context_config(self) -> dict:
         """加载上下文配置"""
@@ -69,10 +172,13 @@ class AIService:
             }
             with open(self.context_config_path, "w", encoding="utf-8") as f:
                 json.dump(default_config, f, ensure_ascii=False, indent=2)
-            return default_config
+            return self._apply_env_overrides_context(default_config)
         
         with open(self.context_config_path, "r", encoding="utf-8") as f:
-            return json.load(f)
+            config = json.load(f)
+        if not isinstance(config, dict):
+            config = {}
+        return self._apply_env_overrides_context(config)
     
     def _get_user_memory_dir(self, user_id: int) -> Path:
         """获取用户记忆目录"""
@@ -205,8 +311,12 @@ class AIService:
     def _get_api_key(self, api_config: dict) -> str:
         """从环境变量获取API Key"""
         # 优先使用api_key_env指定的环境变量
-        env_var = api_config.get("api_key_env")
+        env_var = api_config.get("api_key_env", "")
         if env_var:
+            # 如果值本身就是 key（以 sk- 开头），直接使用
+            if env_var.startswith("sk-"):
+                return env_var
+            # 否则当作环境变量名去读取
             key = os.environ.get(env_var, "")
             if key:
                 return key
@@ -220,19 +330,29 @@ class AIService:
         cancel_event: Optional[asyncio.Event] = None
     ) -> dict:
         """调用单个API"""
+        base_url = (api_config.get("base_url") or "").strip()
+        if not base_url:
+            env_hint = api_config.get("base_url_env") or "AI_PRIMARY_BASE_URL"
+            raise ValueError(f"API base_url未配置，请设置环境变量: {env_hint}")
+
+        model = (api_config.get("model") or "").strip()
+        if not model:
+            env_hint = api_config.get("model_env") or "AI_PRIMARY_MODEL"
+            raise ValueError(f"API model未配置，请设置环境变量: {env_hint}")
+
         api_key = self._get_api_key(api_config)
         if not api_key:
             raise ValueError(f"API Key未配置，请设置环境变量: {api_config.get('api_key_env', 'OPENAI_API_KEY')}")
         
         async with httpx.AsyncClient(timeout=120.0) as client:
             request_coro = client.post(
-                f"{api_config['base_url']}/chat/completions",
+                f"{base_url}/chat/completions",
                 headers={
                     "Authorization": f"Bearer {api_key}",
                     "Content-Type": "application/json"
                 },
                 json={
-                    "model": api_config["model"],
+                    "model": model,
                     "messages": messages,
                     "temperature": 0.8,
                     "max_tokens": 2000
@@ -260,12 +380,41 @@ class AIService:
             else:
                 response = await request_coro
             
-            response.raise_for_status()
+            try:
+                response.raise_for_status()
+            except httpx.HTTPStatusError as e:
+                body = ""
+                try:
+                    body = (e.response.text or "").strip()
+                except Exception:
+                    body = ""
+                if len(body) > 2000:
+                    body = body[:2000] + "..."
+                raise ValueError(
+                    f"上游API错误 {e.response.status_code} ({e.response.reason_phrase}): {body}"
+                ) from e
+
             result = response.json()
-            
-            content = result["choices"][0]["message"]["content"]
-            
-            return {"content": content}
+
+            choices = result.get("choices")
+            content = ""
+            reasoning_content = ""
+            if isinstance(choices, list) and choices:
+                first = choices[0]
+                if isinstance(first, dict):
+                    msg = first.get("message")
+                    if isinstance(msg, dict):
+                        c = msg.get("content")
+                        if isinstance(c, str):
+                            content = c
+                        elif c is not None:
+                            content = str(c)
+
+                        rc = msg.get("reasoning_content")
+                        if isinstance(rc, str):
+                            reasoning_content = rc
+
+            return {"content": content, "reasoning_content": reasoning_content}
 
     async def recognize_image(self, image_path: str, user_id: int) -> str:
         """识别图片内容"""
