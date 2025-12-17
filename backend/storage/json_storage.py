@@ -32,6 +32,7 @@ class JsonStorage:
 
         self._users_file = self.base_dir / "users.json"
         self._invites_file = self.base_dir / "invites.json"
+        self._settings_file = self.base_dir / "settings.json"
 
     def _lockfile_path(self, path: Path) -> Path:
         return path.parent / f"{path.name}.lock"
@@ -397,3 +398,58 @@ class JsonStorage:
         if not isinstance(items, list):
             return []
         return list(items)
+
+    # ==================== Settings ====================
+    def get_settings(self) -> Dict[str, Any]:
+        """Get global settings"""
+        default = {"invite_code_enabled": True}
+        data = self.read_json(self._settings_file, default)
+        if not isinstance(data, dict):
+            return default
+        return data
+
+    def update_settings(self, updates: Dict[str, Any]) -> Dict[str, Any]:
+        """Update global settings"""
+        with self._lock_paths([self._settings_file]):
+            data = self._read_json_unlocked(self._settings_file, {"invite_code_enabled": True})
+            if not isinstance(data, dict):
+                data = {"invite_code_enabled": True}
+            data.update(updates)
+            self._write_json_atomic_unlocked(self._settings_file, data)
+            return data
+
+    def is_invite_code_enabled(self) -> bool:
+        """Check if invite code system is enabled"""
+        settings = self.get_settings()
+        return settings.get("invite_code_enabled", True)
+
+    def register_user_no_invite(self, username: str, pwd_hash: str) -> Dict[str, Any]:
+        """Register user without invite code (when invite system is disabled)"""
+        with self._lock_paths([self._users_file]):
+            users_data = self._read_users_data_unlocked()
+
+            for user in users_data["items"]:
+                if user.get("username") == username:
+                    raise ValueError("username_exists")
+
+            user_id = users_data["next_id"]
+            created_at = datetime.now().isoformat()
+            
+            import random
+            conditions = ["emotional", "factual", "none"]
+            condition = random.choice(conditions)
+            
+            user = {
+                "id": user_id,
+                "username": username,
+                "pwd_hash": pwd_hash,
+                "avatar": "",
+                "invite_code_used": "no_code",
+                "created_at": created_at,
+                "self_disclosure_condition": condition,
+            }
+            users_data["items"].append(user)
+            users_data["next_id"] = user_id + 1
+
+            self._write_json_atomic_unlocked(self._users_file, users_data)
+            return user

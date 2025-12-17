@@ -10,7 +10,10 @@ export const authAPI = {
   
   // 注册
   register: (username, password, invite_code) => 
-    client.post('/auth/register', { username, password, invite_code })
+    client.post('/auth/register', { username, password, invite_code }),
+  
+  // 获取邀请码系统状态
+  getInviteCodeStatus: () => client.get('/auth/invite_code_status')
 }
 
 export const userAPI = {
@@ -84,7 +87,14 @@ export const adminAPI = {
   deleteUser: (userId) => client.delete(`/admin/user/${userId}`),
   
   // 获取系统统计
-  getStats: () => client.get('/admin/stats')
+  getStats: () => client.get('/admin/stats'),
+  
+  // 获取邀请码开关状态
+  getInviteCodeSetting: () => client.get('/admin/settings/invite_code'),
+  
+  // 设置邀请码开关状态
+  setInviteCodeSetting: (enabled) => 
+    client.post('/admin/settings/invite_code', { enabled })
 }
 
 export const configAPI = {

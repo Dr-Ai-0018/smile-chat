@@ -207,6 +207,24 @@
           </div>
         </div>
 
+        <!-- 邀请码开关 -->
+        <div class="invite-toggle-section">
+          <div class="toggle-row">
+            <div class="toggle-info">
+              <span class="toggle-label">邀请码制度</span>
+              <span class="toggle-desc">{{ inviteCodeEnabled ? '用户注册需要邀请码' : '用户可自由注册（无需邀请码）' }}</span>
+            </div>
+            <label class="toggle-switch">
+              <input 
+                type="checkbox" 
+                v-model="inviteCodeEnabled" 
+                @change="toggleInviteCode"
+              />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+        </div>
+
         <!-- 新生成的邀请码 -->
         <div v-if="newInvites.length > 0" class="new-invites-section">
           <h3>🎉 新生成的邀请码</h3>
@@ -425,6 +443,7 @@ const userSearch = ref('')
 const inviteFilter = ref('all')
 const inviteCount = ref(5)
 const newInvites = ref([])
+const inviteCodeEnabled = ref(true)
 
 // 用户详情弹窗
 const showUserModal = ref(false)
@@ -490,6 +509,27 @@ const loadInvites = async () => {
     invites.value = res.invites
   } catch (err) {
     console.error('加载邀请码失败:', err)
+  }
+}
+
+const loadInviteCodeSetting = async () => {
+  try {
+    const res = await adminAPI.getInviteCodeSetting()
+    inviteCodeEnabled.value = res.invite_code_enabled
+  } catch (err) {
+    console.error('加载邀请码设置失败:', err)
+  }
+}
+
+const toggleInviteCode = async () => {
+  try {
+    const res = await adminAPI.setInviteCodeSetting(inviteCodeEnabled.value)
+    toast.success(res.message)
+  } catch (err) {
+    console.error('切换邀请码设置失败:', err)
+    toast.error('设置失败')
+    // 恢复原值
+    inviteCodeEnabled.value = !inviteCodeEnabled.value
   }
 }
 
@@ -720,6 +760,7 @@ onMounted(() => {
   loadStats()
   loadUsers()
   loadInvites()
+  loadInviteCodeSetting()
   loadAllMemory()
   loadContextConfig()
 })
@@ -1541,6 +1582,83 @@ onMounted(() => {
   text-align: center;
   padding: 2rem;
   color: rgba(255, 255, 255, 0.5);
+}
+
+/* Invite Toggle Section */
+.invite-toggle-section {
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 12px;
+  padding: 1.25rem;
+  margin-bottom: 1.5rem;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.toggle-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.toggle-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.toggle-label {
+  font-weight: 600;
+  font-size: 1rem;
+  color: #ffd700;
+}
+
+.toggle-desc {
+  font-size: 0.85rem;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.toggle-switch {
+  position: relative;
+  display: inline-block;
+  width: 56px;
+  height: 30px;
+}
+
+.toggle-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.toggle-slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(255, 255, 255, 0.2);
+  transition: 0.3s;
+  border-radius: 30px;
+}
+
+.toggle-slider:before {
+  position: absolute;
+  content: "";
+  height: 22px;
+  width: 22px;
+  left: 4px;
+  bottom: 4px;
+  background-color: white;
+  transition: 0.3s;
+  border-radius: 50%;
+}
+
+.toggle-switch input:checked + .toggle-slider {
+  background: linear-gradient(135deg, #ffd700, #ffa500);
+}
+
+.toggle-switch input:checked + .toggle-slider:before {
+  transform: translateX(26px);
 }
 
 /* Modal Transitions */

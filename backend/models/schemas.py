@@ -9,7 +9,7 @@ from datetime import datetime
 class RegisterRequest(BaseModel):
     username: str = Field(..., min_length=3, max_length=20)
     password: str = Field(..., min_length=6)
-    invite_code: str
+    invite_code: Optional[str] = None
 
 class LoginRequest(BaseModel):
     username: str
