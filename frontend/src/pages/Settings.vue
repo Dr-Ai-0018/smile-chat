@@ -97,11 +97,11 @@ const loading = ref(false)
 const loadingText = ref('')
 const fileInput = ref(null)
 
-// 计算头像URL
+// 计算头像URL - 直接使用相对路径
 const avatarUrl = computed(() => {
   if (!profile.value.avatar) return ''
-  const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
-  return `${baseUrl}${profile.value.avatar}`
+  // avatar已经是 /uploads/avatars/xxx 格式的相对路径，直接使用
+  return profile.value.avatar
 })
 
 // 加载用户信息

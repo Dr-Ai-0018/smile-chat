@@ -5,7 +5,14 @@ ChatLogger - 可观测性日志
 """
 import json
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
+
+# 中国时区 UTC+8
+CHINA_TZ = timezone(timedelta(hours=8))
+
+def get_china_now() -> datetime:
+    """获取中国时间"""
+    return datetime.now(CHINA_TZ)
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -43,7 +50,7 @@ class ChatLogger:
         log_entry = {
             "request_id": request_id,
             "user_id": user_id,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": get_china_now().isoformat(),
             "type": "request",
             "preset": preset,
             "condition": condition,
@@ -73,7 +80,7 @@ class ChatLogger:
         log_entry = {
             "request_id": request_id,
             "user_id": user_id,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": get_china_now().isoformat(),
             "type": "response",
             "raw_content_preview": raw_content[:500] if raw_content else "",
             "reasoning_content_preview": reasoning_content[:500] if reasoning_content else "",
@@ -98,7 +105,7 @@ class ChatLogger:
     ):
         """写入日志文件"""
         logs_dir = self._get_logs_dir(user_id)
-        today = datetime.now().strftime("%Y-%m-%d")
+        today = get_china_now().strftime("%Y-%m-%d")
         log_file = logs_dir / f"{today}_{request_id}{suffix}.json"
         
         try:

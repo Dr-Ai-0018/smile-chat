@@ -527,10 +527,16 @@ const collectRecentMessages = () => {
     // 如果在图片轮次限制内且有图片，添加图片（确保是字符串）
     if (msg.image && typeof msg.image === 'string' && roundCount <= imageRoundLimit) {
       msgData.image = msg.image
+      // DEBUG: 打印图片信息
+      console.log(`[DEBUG] 收集消息 ${i}: role=${msg.role}, image_len=${msg.image.length}, preview=${msg.image.substring(0, 50)}...`)
     }
     
     result.unshift(msgData)
   }
+  
+  // DEBUG: 统计包含图片的消息数
+  const imgCount = result.filter(m => m.image).length
+  console.log(`[DEBUG] collectRecentMessages: total=${result.length}, with_image=${imgCount}`)
   
   return result
 }
@@ -665,13 +671,12 @@ const logout = async () => {
 
 // 同步用户头像（只请求一次，更新响应式变量）
 const syncUserAvatar = async () => {
-  const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
-  
   // 先从localStorage读取，立即显示
   try {
     const storedUser = JSON.parse(localStorage.getItem('user') || '{}')
     if (storedUser.avatar) {
-      userAvatarUrl.value = `${baseUrl}${storedUser.avatar}`
+      // avatar已经是 /uploads/avatars/xxx 格式的相对路径，直接使用
+      userAvatarUrl.value = storedUser.avatar
     }
   } catch {}
   
@@ -679,7 +684,8 @@ const syncUserAvatar = async () => {
   try {
     const profile = await userAPI.getProfile()
     if (profile && profile.avatar) {
-      userAvatarUrl.value = `${baseUrl}${profile.avatar}`
+      // 直接使用相对路径
+      userAvatarUrl.value = profile.avatar
       
       // 同步到localStorage
       const storedUser = JSON.parse(localStorage.getItem('user') || '{}')
@@ -1451,6 +1457,71 @@ onUnmounted(() => {
   .sidebar {
     width: 80%;
     max-width: 300px;
+  }
+  
+  .chat-input-area {
+    padding: 1rem 0.75rem;
+  }
+  
+  .input-container {
+    padding: 0.375rem;
+    gap: 0.375rem;
+  }
+  
+  .message-input {
+    padding: 0.625rem 1rem;
+    font-size: 0.95rem;
+    min-width: 0;
+  }
+  
+  .icon-btn {
+    width: 36px;
+    height: 36px;
+    flex-shrink: 0;
+  }
+  
+  .message-body {
+    max-width: 80%;
+  }
+}
+
+/* 窄屏手机适配 */
+@media (max-width: 400px) {
+  .chat-input-area {
+    padding: 0.75rem 0.5rem;
+  }
+  
+  .input-container {
+    padding: 0.25rem;
+    gap: 0.25rem;
+  }
+  
+  .message-input {
+    padding: 0.5rem 0.75rem;
+    font-size: 0.9rem;
+  }
+  
+  .icon-btn {
+    width: 32px;
+    height: 32px;
+  }
+  
+  .icon-btn svg {
+    width: 18px;
+    height: 18px;
+  }
+  
+  .star-deco {
+    display: none;
+  }
+  
+  .message-body {
+    max-width: 85%;
+  }
+  
+  .message-content {
+    padding: 0.75rem 1rem;
+    font-size: 0.95rem;
   }
 }
 </style>
