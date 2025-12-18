@@ -247,10 +247,9 @@ class JsonStorage:
 
             user_id = data["next_id"]
             created_at = get_china_now().isoformat()
-            # 随机分配实验条件 (emotional/factual/none)
-            import random
-            conditions = ["emotional", "factual", "none"]
-            condition = random.choice(conditions)
+            # 按 user_id % 3 确定性分配实验条件
+            conditions = ["none", "emotional", "factual"]
+            condition = conditions[user_id % 3]
             
             user = {
                 "id": user_id,
@@ -378,6 +377,9 @@ class JsonStorage:
 
             user_id = users_data["next_id"]
             created_at = get_china_now().isoformat()
+            # 按 user_id % 3 确定性分配实验条件
+            conditions = ["none", "emotional", "factual"]
+            condition = conditions[user_id % 3]
             user = {
                 "id": user_id,
                 "username": username,
@@ -385,6 +387,7 @@ class JsonStorage:
                 "avatar": "",
                 "invite_code_used": invite_code,
                 "created_at": created_at,
+                "self_disclosure_condition": condition,
             }
             users_data["items"].append(user)
             users_data["next_id"] = user_id + 1
@@ -441,10 +444,9 @@ class JsonStorage:
 
             user_id = users_data["next_id"]
             created_at = get_china_now().isoformat()
-            
-            import random
-            conditions = ["emotional", "factual", "none"]
-            condition = random.choice(conditions)
+            # 按 user_id % 3 确定性分配实验条件
+            conditions = ["none", "emotional", "factual"]
+            condition = conditions[user_id % 3]
             
             user = {
                 "id": user_id,

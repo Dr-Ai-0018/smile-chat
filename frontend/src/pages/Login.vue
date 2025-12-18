@@ -68,8 +68,8 @@ const handleLogin = async () => {
       username: response.username
     }))
     
-    // 跳转到聊天页面
-    router.push('/chat')
+    // 跳转到实验开始页
+    router.push('/experiment/start')
   } catch (err) {
     error.value = err.response?.data?.detail || '登录失败，请检查用户名和密码'
   } finally {
