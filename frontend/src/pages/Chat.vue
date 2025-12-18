@@ -181,7 +181,8 @@
           <h2>今日聊天时间已结束</h2>
           <p>感谢你今天的陪伴，明天再来和我聊天吧~</p>
           <p class="ended-hint">每天的聊天时间为16分钟</p>
-          <button class="ended-btn" @click="$router.push('/settings')">去设置页面</button>
+          <button class="ended-btn primary" @click="$router.push('/experiment/end')">填写后测问卷</button>
+          <button class="ended-btn secondary" @click="$router.push('/settings')">去设置页面</button>
         </div>
       </div>
     </Transition>
@@ -1441,6 +1442,28 @@ onUnmounted(() => {
 .ended-btn:hover {
   transform: translateY(-2px);
   box-shadow: 0 8px 20px rgba(253, 209, 82, 0.4);
+}
+
+.ended-btn.primary {
+  background: linear-gradient(135deg, #F59E0B, #D97706);
+  color: #fff;
+  margin-top: 1.5rem;
+}
+
+.ended-btn.primary:hover {
+  box-shadow: 0 8px 20px rgba(245, 158, 11, 0.4);
+}
+
+.ended-btn.secondary {
+  background: transparent;
+  color: rgba(255, 255, 255, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  margin-top: 0.75rem;
+}
+
+.ended-btn.secondary:hover {
+  background: rgba(255, 255, 255, 0.1);
+  box-shadow: none;
 }
 
 /* 移动端适配 */
