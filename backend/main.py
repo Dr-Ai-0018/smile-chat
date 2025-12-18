@@ -85,7 +85,12 @@ app = FastAPI(
 # CORS配置
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000"],
+    allow_origins=[
+        "http://localhost:5173", 
+        "http://localhost:3000",
+        "https://ai.qimingbot.com",
+        "http://ai.qimingbot.com",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

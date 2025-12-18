@@ -7,7 +7,14 @@ from pydantic import BaseModel
 from typing import List
 import secrets
 import json
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
+
+# 中国时区 UTC+8
+CHINA_TZ = timezone(timedelta(hours=8))
+
+def get_china_now() -> datetime:
+    """获取中国时间"""
+    return datetime.now(CHINA_TZ)
 
 from models.schemas import InviteCodeCreate, PasswordReset
 from pydantic import BaseModel as PydanticBaseModel
@@ -314,7 +321,7 @@ async def get_system_stats(
     users = storage.read_users()
     user_count = len(users)
 
-    today = datetime.now().date()
+    today = get_china_now().date()
     msg_count = 0
     today_msg_count = 0
     active_users = 0

@@ -9,7 +9,14 @@ import json
 import os
 from pathlib import Path
 from typing import List, Dict, Optional, Any
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
+
+# 中国时区 UTC+8
+CHINA_TZ = timezone(timedelta(hours=8))
+
+def get_china_now() -> datetime:
+    """获取中国时间"""
+    return datetime.now(CHINA_TZ)
 
 from storage import JsonStorage
 from services.prompt_manager import get_prompt_manager
@@ -249,12 +256,12 @@ class AIService:
                 # 有图片 - 使用OpenAI的多模态格式
                 content_parts = []
                 
-                # 先添加文字（如果有）
-                if content:
-                    content_parts.append({
-                        "type": "text",
-                        "text": content
-                    })
+                # 先添加文字（如果有），如果没有文字则添加提示
+                text_content = content if content else "请看这张图片"
+                content_parts.append({
+                    "type": "text",
+                    "text": text_content
+                })
                 
                 # 添加图片
                 if image.startswith("data:"):
@@ -344,6 +351,15 @@ class AIService:
         if not api_key:
             raise ValueError(f"API Key未配置，请设置环境变量: {api_config.get('api_key_env', 'OPENAI_API_KEY')}")
         
+        # DEBUG: 检查发送给API的消息
+        for i, msg in enumerate(messages):
+            content = msg.get("content")
+            if isinstance(content, list):
+                for j, part in enumerate(content):
+                    if part.get("type") == "image_url":
+                        img_url = part.get("image_url", {}).get("url", "")
+                        print(f"[DEBUG API] Message {i} part {j}: image_url, len={len(img_url)}, preview={img_url[:80]}...")
+        
         async with httpx.AsyncClient(timeout=120.0) as client:
             request_coro = client.post(
                 f"{base_url}/chat/completions",
@@ -395,16 +411,22 @@ class AIService:
                 ) from e
 
             result = response.json()
+            
+            # DEBUG: 打印API原始响应
+            print(f"[DEBUG API RESPONSE] keys: {result.keys()}")
 
             choices = result.get("choices")
             content = ""
             reasoning_content = ""
             if isinstance(choices, list) and choices:
                 first = choices[0]
+                print(f"[DEBUG API RESPONSE] first choice keys: {first.keys() if isinstance(first, dict) else type(first)}")
                 if isinstance(first, dict):
                     msg = first.get("message")
+                    print(f"[DEBUG API RESPONSE] message keys: {msg.keys() if isinstance(msg, dict) else type(msg)}")
                     if isinstance(msg, dict):
                         c = msg.get("content")
+                        print(f"[DEBUG API RESPONSE] content type: {type(c)}, len: {len(c) if isinstance(c, str) else 'N/A'}, value[:100]: {str(c)[:100] if c else 'None/Empty'}")
                         if isinstance(c, str):
                             content = c
                         elif c is not None:
@@ -413,7 +435,10 @@ class AIService:
                         rc = msg.get("reasoning_content")
                         if isinstance(rc, str):
                             reasoning_content = rc
+            else:
+                print(f"[DEBUG API RESPONSE] No valid choices! choices={choices}")
 
+            print(f"[DEBUG API RESPONSE] Final content len: {len(content)}, reasoning len: {len(reasoning_content)}")
             return {"content": content, "reasoning_content": reasoning_content}
 
     async def recognize_image(self, image_path: str, user_id: int) -> str:
@@ -525,7 +550,7 @@ class AIService:
             # 使用MemoryService保存结构化LTM（自动版本管理）
             source_window = {
                 "message_count": len(messages),
-                "compress_time": datetime.now().isoformat(),
+                "compress_time": get_china_now().isoformat(),
             }
             self.memory_service.write_ltm(user_id, compressed_memory, source_window)
             
@@ -719,21 +744,31 @@ class AIService:
             
             include_image = image and isinstance(image, str) and round_count_from_end[i] <= image_rounds
             
+            # DEBUG: 打印图片信息
+            if image:
+                img_len = len(image) if isinstance(image, str) else 0
+                img_preview = image[:100] if isinstance(image, str) else str(image)
+                print(f"[DEBUG] Message {i}: role={role}, has_image=True, image_len={img_len}, include_image={include_image}")
+                print(f"[DEBUG] Image preview: {img_preview}...")
+            
             if include_image:
                 content_parts = []
-                if content:
-                    content_parts.append({"type": "text", "text": content})
+                # 如果没有文字内容，添加提示文本让模型知道要看图片
+                text_content = content if content else "请看这张图片"
+                content_parts.append({"type": "text", "text": text_content})
                 
                 if image.startswith("data:"):
                     content_parts.append({
                         "type": "image_url",
                         "image_url": {"url": image}
                     })
+                    print(f"[DEBUG] Added image_url with data: prefix, len={len(image)}, total content_parts={len(content_parts)}")
                 else:
                     content_parts.append({
                         "type": "image_url",
                         "image_url": {"url": f"data:image/jpeg;base64,{image}"}
                     })
+                    print(f"[DEBUG] Added image_url with base64 prefix, len={len(image)}, total content_parts={len(content_parts)}")
                 
                 api_messages.append({"role": role, "content": content_parts})
             else:

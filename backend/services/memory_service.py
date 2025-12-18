@@ -4,7 +4,14 @@ MemoryService - 管理长期记忆 (LTM)
 """
 import json
 import shutil
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
+
+# 中国时区 UTC+8
+CHINA_TZ = timezone(timedelta(hours=8))
+
+def get_china_now() -> datetime:
+    """获取中国时间"""
+    return datetime.now(CHINA_TZ)
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from dataclasses import dataclass, asdict
@@ -75,7 +82,7 @@ class MemoryService:
                 if text:
                     return LTMData(
                         summary_text=text,
-                        last_summary_time=datetime.now().isoformat(),
+                        last_summary_time=get_china_now().isoformat(),
                         summary_version=0,  # 迁移版本标记为0
                         source_window={},
                     )
@@ -126,7 +133,7 @@ class MemoryService:
         new_version = current_version + 1
         ltm_data = LTMData(
             summary_text=summary_text,
-            last_summary_time=datetime.now().isoformat(),
+            last_summary_time=get_china_now().isoformat(),
             summary_version=new_version,
             source_window=source_window or {},
         )
@@ -200,7 +207,7 @@ class MemoryService:
             # 恢复指定版本（版本号+1）
             new_version = data.get("summary_version", version) + 1
             data["summary_version"] = new_version
-            data["last_summary_time"] = datetime.now().isoformat()
+            data["last_summary_time"] = get_china_now().isoformat()
             
             with open(ltm_file, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)

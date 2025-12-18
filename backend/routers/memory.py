@@ -4,7 +4,14 @@
 from fastapi import APIRouter, Depends, HTTPException
 from pathlib import Path
 import json
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
+
+# 中国时区 UTC+8
+CHINA_TZ = timezone(timedelta(hours=8))
+
+def get_china_now() -> datetime:
+    """获取中国时间"""
+    return datetime.now(CHINA_TZ)
 
 from routers.user import get_current_user
 from models.schemas import MemoryUpdate
@@ -81,7 +88,7 @@ async def update_memory(
         history_dir = memory_dir / "history"
         history_dir.mkdir(exist_ok=True)
         
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        timestamp = get_china_now().strftime("%Y%m%d_%H%M%S")
         file_path = history_dir / f"{timestamp}.txt"
         
         with open(file_path, "w", encoding="utf-8") as f:

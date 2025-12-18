@@ -5,7 +5,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from pathlib import Path
 import json
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 from pydantic import BaseModel
 
@@ -13,6 +13,13 @@ from routers.user import get_current_user
 from models.schemas import ChatResponse
 from services.ai_service import AIService
 from storage import JsonStorage
+
+# 中国时区 UTC+8
+CHINA_TZ = timezone(timedelta(hours=8))
+
+def get_china_now() -> datetime:
+    """获取中国时间"""
+    return datetime.now(CHINA_TZ)
 
 router = APIRouter()
 ai_service = AIService()
@@ -56,12 +63,13 @@ def save_message_to_history(user_id: int, role: str, content: str, image: str = 
     user_dir = get_user_memory_dir(user_id)
     history_dir = user_dir / "history"
     
-    # 使用日期作为文件名，每天一个文件
-    today = datetime.now().strftime("%Y-%m-%d")
+    # 使用中国时间的日期作为文件名，每天一个文件
+    china_now = get_china_now()
+    today = china_now.strftime("%Y-%m-%d")
     history_file = history_dir / f"{today}.txt"
     
-    # 构建消息内容
-    timestamp = datetime.now().strftime("%H:%M:%S")
+    # 构建消息内容 - 使用中国时间
+    timestamp = china_now.strftime("%H:%M:%S")
     role_name = "用户" if role == "user" else "启明"
     
     # 如果有图片，标注
@@ -91,7 +99,7 @@ def update_json_memory(user_id: int, key: str, value):
     
     # 更新
     data[key] = value
-    data["last_updated"] = datetime.now().isoformat()
+    data["last_updated"] = get_china_now().isoformat()
     
     # 保存
     with open(json_file, "w", encoding="utf-8") as f:
@@ -115,6 +123,14 @@ async def send_message_with_context(
 ):
     """发送消息（带完整上下文，支持图片）"""
     cancel_event = register_request(user_id)
+    
+    # DEBUG: 打印收到的消息
+    for i, m in enumerate(request.messages):
+        if m.image:
+            img_len = len(m.image) if m.image else 0
+            img_preview = m.image[:100] if m.image else "None"
+            print(f"[DEBUG ROUTER] Message {i}: role={m.role}, has_image=True, image_len={img_len}")
+            print(f"[DEBUG ROUTER] Image preview: {img_preview}...")
     
     # 获取最后一条用户消息
     user_messages = [m for m in request.messages if m.role == "user"]
@@ -156,7 +172,7 @@ async def send_message_with_context(
             segments = [reply_content] if reply_content else []
             total_segments = len(segments)
 
-        ts = datetime.now().isoformat()
+        ts = get_china_now().isoformat()
         for idx, seg in enumerate(segments):
             seg_text = (str(seg) if seg is not None else "").strip()
             if seg_text.endswith("。"):
@@ -184,7 +200,7 @@ async def send_message_with_context(
         return ChatResponse(
             role="assistant",
             content=reply_content,
-            timestamp=datetime.now(),
+            timestamp=get_china_now(),
             reply=reply,
             segments=segments,
             meta=meta,
@@ -198,7 +214,7 @@ async def send_message_with_context(
 
 async def check_and_compress_memory(user_id: int):
     """检查并执行自动记忆压缩"""
-    now = datetime.now()
+    now = get_china_now()
     
     # 获取或初始化用户活动记录
     if user_id not in user_activity:

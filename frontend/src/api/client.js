@@ -11,7 +11,10 @@ const client = axios.create({
   timeout: 120000,
   headers: {
     'Content-Type': 'application/json'
-  }
+  },
+  // 支持大图片传输（base64编码后可能很大）
+  maxContentLength: Infinity,
+  maxBodyLength: Infinity
 })
 
 // 请求拦截器 - 添加Token

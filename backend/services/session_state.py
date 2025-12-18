@@ -3,12 +3,19 @@ SessionStateService - 维护短期状态
 计算 preset（动态状态参数）供每轮对话使用
 """
 import json
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from dataclasses import dataclass, asdict
 
 from storage import JsonStorage
+
+# 中国时区 UTC+8
+CHINA_TZ = timezone(timedelta(hours=8))
+
+def get_china_now() -> datetime:
+    """获取中国时间"""
+    return datetime.now(CHINA_TZ)
 
 
 @dataclass
@@ -39,10 +46,10 @@ class SessionStateService:
         if user_id in self._session_cache:
             return self._session_cache[user_id]
         
-        # 初始化新会话
+        # 初始化新会话 - 使用中国时间
         session = {
             "user_id": user_id,
-            "start_time": datetime.now().isoformat(),
+            "start_time": get_china_now().isoformat(),
             "turn_count": 0,
             "last_relationship_stage": "A",
             "self_disclosure_condition": "emotional",  # 默认情感表露组
@@ -65,12 +72,15 @@ class SessionStateService:
         # 2. 获取 last_relationship_stage
         last_stage = session.get("last_relationship_stage", "A")
         
-        # 3. 计算 conversation_duration_min
+        # 3. 计算 conversation_duration_min - 使用中国时间
         start_time_str = session.get("start_time")
         if start_time_str:
             try:
                 start_time = datetime.fromisoformat(start_time_str)
-                duration = (datetime.now() - start_time).total_seconds() / 60
+                # 确保时区一致
+                if start_time.tzinfo is None:
+                    start_time = start_time.replace(tzinfo=CHINA_TZ)
+                duration = (get_china_now() - start_time).total_seconds() / 60
                 duration_min = int(duration // 5) * 5  # 精度5分钟
             except Exception:
                 duration_min = 0
@@ -113,8 +123,8 @@ class SessionStateService:
         return disclosure_count / len(recent_5)
     
     def _get_time_bucket(self) -> str:
-        """获取当前时间段"""
-        hour = datetime.now().hour
+        """获取当前时间段 - 使用中国时间"""
+        hour = get_china_now().hour
         if 5 <= hour < 12:
             return "morning"
         elif 12 <= hour < 18:

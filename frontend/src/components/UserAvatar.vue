@@ -56,8 +56,8 @@ const loadFromLocal = () => {
   try {
     const user = JSON.parse(localStorage.getItem('user') || '{}')
     if (user.avatar) {
-      const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
-      localUrl.value = `${baseUrl}${user.avatar}`
+      // avatar已经是 /uploads/avatars/xxx 格式的相对路径，直接使用
+      localUrl.value = user.avatar
     }
   } catch {
     localUrl.value = ''

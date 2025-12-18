@@ -4,7 +4,14 @@ import tempfile
 import threading
 import time
 from contextlib import ExitStack, contextmanager
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
+
+# 中国时区 UTC+8
+CHINA_TZ = timezone(timedelta(hours=8))
+
+def get_china_now() -> datetime:
+    """获取中国时间"""
+    return datetime.now(CHINA_TZ)
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -196,7 +203,7 @@ class JsonStorage:
                 "role": role,
                 "content": content,
                 "image": image,
-                "timestamp": timestamp or datetime.now().isoformat(),
+                "timestamp": timestamp or get_china_now().isoformat(),
                 "meta": meta or {},
             }
             items.append(item)
@@ -239,7 +246,7 @@ class JsonStorage:
                     raise ValueError("username_exists")
 
             user_id = data["next_id"]
-            created_at = datetime.now().isoformat()
+            created_at = get_china_now().isoformat()
             # 随机分配实验条件 (emotional/factual/none)
             import random
             conditions = ["emotional", "factual", "none"]
@@ -321,7 +328,7 @@ class JsonStorage:
 
             existing = {i.get("code") for i in items if isinstance(i, dict)}
             created = []
-            created_at = datetime.now().isoformat()
+            created_at = get_china_now().isoformat()
             for code in codes:
                 if code in existing:
                     continue
@@ -370,7 +377,7 @@ class JsonStorage:
                 raise ValueError("invalid_invite")
 
             user_id = users_data["next_id"]
-            created_at = datetime.now().isoformat()
+            created_at = get_china_now().isoformat()
             user = {
                 "id": user_id,
                 "username": username,
@@ -433,7 +440,7 @@ class JsonStorage:
                     raise ValueError("username_exists")
 
             user_id = users_data["next_id"]
-            created_at = datetime.now().isoformat()
+            created_at = get_china_now().isoformat()
             
             import random
             conditions = ["emotional", "factual", "none"]
