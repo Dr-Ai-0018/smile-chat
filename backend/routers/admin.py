@@ -54,7 +54,8 @@ async def list_users(
             "username": user.get("username"),
             "avatar": user.get("avatar"),
             "created_at": user.get("created_at"),
-            "message_count": msg_count
+            "message_count": msg_count,
+            "condition": user.get("self_disclosure_condition", "none"),
         })
 
     return {"users": users}

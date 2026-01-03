@@ -1,5 +1,6 @@
 <template>
-  <div class="experiment-container">
+  <div class="experiment-page">
+    <div class="experiment-container">
     <!-- 左侧：实验流程 -->
     <div class="panel-info">
       <div class="header">
@@ -100,6 +101,7 @@
         </div>
       </div>
     </div>
+    </div>
   </div>
 </template>
 
@@ -110,8 +112,8 @@ import { useRouter } from 'vue-router'
 const router = useRouter()
 
 // 占位符配置 - 后续替换为真实链接
-const POSTTEST_QR_IMAGE_URL = 'https://imgbed.killerbest.com/file/1766060814328_bb482fa44dc268e21965bee3e5e6e3d1.png' // 替换为真实二维码图片URL
-const POSTTEST_LINK = 'https://www.credamo.com/s/N7J7Fr/cdmkiQLaAqWE' // 替换为真实问卷链接
+const POSTTEST_QR_IMAGE_URL = 'https://imgbed.killerbest.com/file/1766064425104_0.png' // 替换为真实二维码图片URL
+const POSTTEST_LINK = 'https://www.credamo.com/s/zeE73i/' // 后测问卷链接
 
 // 响应式状态
 const selectedOption = ref(null)
@@ -151,7 +153,7 @@ function finishExperiment() {
 
 <style scoped>
 /* 品牌色变量 */
-.experiment-container {
+.experiment-page {
   --primary: #F59E0B;
   --primary-light: #FFF7ED;
   --primary-hover: #D97706;
@@ -167,7 +169,7 @@ function finishExperiment() {
   --radius-md: 12px;
 }
 
-.experiment-container {
+.experiment-page {
   width: 100%;
   min-height: 100vh;
   background-color: var(--bg-body);
@@ -179,6 +181,7 @@ function finishExperiment() {
 }
 
 .experiment-container {
+  width: 100%;
   max-width: 1000px;
   min-height: 600px;
   background: var(--surface);
@@ -334,12 +337,13 @@ function finishExperiment() {
 
 .qr-img {
   width: 100%;
-  aspect-ratio: 1;
+  min-height: 180px;
   background: #F0F0F0;
   border-radius: 8px;
   margin-bottom: 12px;
-  display: grid;
-  place-items: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   color: var(--text-muted);
   font-size: 12px;
   overflow: hidden;
@@ -347,8 +351,8 @@ function finishExperiment() {
 
 .qr-img img {
   width: 100%;
-  height: 100%;
-  object-fit: cover;
+  height: auto;
+  object-fit: contain;
 }
 
 .qr-hint {
@@ -496,11 +500,12 @@ function finishExperiment() {
   }
 }
 
-/* 响应式 */
-@media (max-width: 800px) {
+/* 响应式 - 平板 */
+@media (max-width: 900px) {
   .experiment-container {
     grid-template-columns: 1fr;
-    height: auto;
+    max-width: 600px;
+    margin: 0 auto;
   }
   
   .panel-info {
@@ -515,6 +520,97 @@ function finishExperiment() {
   
   .timeline {
     border-left: 2px dashed var(--border);
+  }
+}
+
+/* 响应式 - 手机 */
+@media (max-width: 480px) {
+  .experiment-page {
+    padding: 12px;
+  }
+
+  .experiment-container {
+    border-radius: 16px;
+  }
+  
+  .panel-info {
+    padding: 24px 20px;
+  }
+  
+  .panel-action {
+    padding: 24px 20px;
+  }
+  
+  .header {
+    margin-bottom: 28px;
+  }
+  
+  .brand {
+    font-size: 16px;
+  }
+  
+  .title {
+    font-size: 24px;
+  }
+  
+  .subtitle {
+    font-size: 18px;
+  }
+  
+  .timeline {
+    padding-left: 24px;
+    margin-left: 6px;
+  }
+  
+  .timeline-dot {
+    left: -32px;
+    width: 12px;
+    height: 12px;
+  }
+  
+  .timeline-item {
+    margin-bottom: 28px;
+  }
+  
+  .t-title {
+    font-size: 15px;
+  }
+  
+  .t-desc {
+    font-size: 13px;
+  }
+  
+  .qr-card {
+    width: 100%;
+    max-width: 280px;
+    padding: 16px;
+    margin-bottom: 24px;
+  }
+  
+  .confirm-area {
+    max-width: 100%;
+  }
+  
+  .options {
+    gap: 10px;
+  }
+  
+  .option-btn {
+    padding: 10px 8px;
+    font-size: 13px;
+  }
+  
+  .cta-btn {
+    height: 50px;
+    font-size: 15px;
+  }
+  
+  .thank-icon {
+    font-size: 36px;
+  }
+  
+  .thank-you p {
+    font-size: 14px;
   }
 }
 </style>
