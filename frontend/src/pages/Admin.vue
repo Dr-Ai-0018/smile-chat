@@ -100,6 +100,7 @@
               <tr>
                 <th>ID</th>
                 <th>用户名</th>
+                <th>实验条件</th>
                 <th>消息数</th>
                 <th>注册时间</th>
                 <th>操作</th>
@@ -111,6 +112,11 @@
                 <td class="username-cell">
                   <span class="username">{{ user.username }}</span>
                   <span v-if="user.id === 1" class="admin-tag">管理员</span>
+                </td>
+                <td class="condition-cell">
+                  <span :class="['condition-badge', user.condition || 'none']">
+                    {{ formatCondition(user.condition) }}
+                  </span>
                 </td>
                 <td class="count-cell">{{ user.message_count }}</td>
                 <td class="date-cell">{{ formatDate(user.created_at) }}</td>
@@ -756,6 +762,15 @@ const formatTime = (dateString) => {
   return `${date.getMonth() + 1}/${date.getDate()} ${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`
 }
 
+const formatCondition = (condition) => {
+  const map = {
+    'emotional': '情感表露',
+    'factual': '事实表露',
+    'none': '无表露'
+  }
+  return map[condition] || '无表露'
+}
+
 onMounted(() => {
   loadStats()
   loadUsers()
@@ -993,6 +1008,32 @@ onMounted(() => {
   font-weight: 600;
 }
 
+/* Condition Badge */
+.condition-badge {
+  padding: 0.25rem 0.6rem;
+  border-radius: 12px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.condition-badge.emotional {
+  background: rgba(239, 68, 68, 0.2);
+  color: #f87171;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.condition-badge.factual {
+  background: rgba(59, 130, 246, 0.2);
+  color: #60a5fa;
+  border: 1px solid rgba(59, 130, 246, 0.3);
+}
+
+.condition-badge.none {
+  background: rgba(156, 163, 175, 0.2);
+  color: #9ca3af;
+  border: 1px solid rgba(156, 163, 175, 0.3);
+}
+
 /* Action Buttons */
 .actions-cell {
   display: flex;
@@ -1004,11 +1045,17 @@ onMounted(() => {
   height: 32px;
   border-radius: 6px;
   border: none;
+  padding: 0;
+  line-height: 0;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
   transition: all 0.2s;
+}
+
+.action-btn svg {
+  display: block;
 }
 
 .action-btn.view {

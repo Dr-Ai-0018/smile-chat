@@ -1,5 +1,6 @@
 <template>
-  <div class="experiment-container">
+  <div class="experiment-page">
+    <div class="experiment-container">
     <!-- 左侧：实验背景与流程 -->
     <div class="panel-info">
       <div class="header">
@@ -104,6 +105,7 @@
         </button>
       </div>
     </div>
+    </div>
   </div>
 </template>
 
@@ -115,7 +117,7 @@ const router = useRouter()
 
 // 占位符配置 - 后续替换为真实链接
 const PRETEST_QR_IMAGE_URL = 'https://imgbed.killerbest.com/file/1766060751227_7524ecfaaee56610c830c24e9a6b4d7c.png' // 替换为真实二维码图片URL
-const PRETEST_LINK = 'https://www.credamo.com/s/VfaMzm/cdmkiQLaAqWE' // 替换为真实问卷链接
+const PRETEST_LINK = 'https://www.credamo.com/s/VfaMzm/' // 前测问卷链接
 
 // 响应式状态
 const username = ref('')
@@ -172,7 +174,7 @@ function goNext() {
 
 <style scoped>
 /* 品牌色变量 */
-.experiment-container {
+.experiment-page {
   --primary: #F59E0B;
   --primary-light: #FFF7ED;
   --primary-hover: #D97706;
@@ -188,7 +190,7 @@ function goNext() {
   --radius-md: 12px;
 }
 
-.experiment-container {
+.experiment-page {
   width: 100%;
   min-height: 100vh;
   background-color: var(--bg-body);
@@ -200,6 +202,7 @@ function goNext() {
 }
 
 .experiment-container {
+  width: 100%;
   max-width: 1000px;
   min-height: 600px;
   background: var(--surface);
@@ -353,12 +356,13 @@ function goNext() {
 
 .qr-img {
   width: 100%;
-  aspect-ratio: 1;
+  min-height: 180px;
   background: #F0F0F0;
   border-radius: 8px;
   margin-bottom: 12px;
-  display: grid;
-  place-items: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   color: var(--text-muted);
   font-size: 12px;
   overflow: hidden;
@@ -366,8 +370,8 @@ function goNext() {
 
 .qr-img img {
   width: 100%;
-  height: 100%;
-  object-fit: cover;
+  height: auto;
+  object-fit: contain;
 }
 
 .qr-hint {
@@ -486,11 +490,12 @@ function goNext() {
   opacity: 1;
 }
 
-/* 响应式 */
-@media (max-width: 800px) {
+/* 响应式 - 平板 */
+@media (max-width: 900px) {
   .experiment-container {
     grid-template-columns: 1fr;
-    height: auto;
+    max-width: 600px;
+    margin: 0 auto;
   }
   
   .panel-info {
@@ -505,6 +510,85 @@ function goNext() {
   
   .timeline {
     border-left: 2px dashed var(--border);
+  }
+}
+
+/* 响应式 - 手机 */
+@media (max-width: 480px) {
+  .experiment-page {
+    padding: 12px;
+  }
+
+  .experiment-container {
+    border-radius: 16px;
+  }
+  
+  .panel-info {
+    padding: 24px 20px;
+  }
+  
+  .panel-action {
+    padding: 24px 20px;
+  }
+  
+  .header {
+    margin-bottom: 28px;
+  }
+  
+  .brand {
+    font-size: 16px;
+  }
+  
+  .title {
+    font-size: 24px;
+  }
+  
+  .timeline {
+    padding-left: 24px;
+    margin-left: 6px;
+  }
+  
+  .timeline-dot {
+    left: -32px;
+    width: 12px;
+    height: 12px;
+  }
+  
+  .timeline-item {
+    margin-bottom: 28px;
+  }
+  
+  .t-title {
+    font-size: 15px;
+  }
+  
+  .t-desc {
+    font-size: 13px;
+  }
+  
+  .qr-card {
+    width: 100%;
+    max-width: 280px;
+    padding: 16px;
+    margin-bottom: 24px;
+  }
+  
+  .confirm-area {
+    max-width: 100%;
+  }
+  
+  .options {
+    gap: 10px;
+  }
+  
+  .option-btn {
+    padding: 10px 8px;
+    font-size: 13px;
+  }
+  
+  .cta-btn {
+    height: 50px;
+    font-size: 15px;
   }
 }
 </style>

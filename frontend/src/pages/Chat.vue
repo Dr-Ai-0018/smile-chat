@@ -11,11 +11,6 @@
           <span v-if="isTyping" class="typing-indicator">正在输入中...</span>
         </h1>
       </div>
-      <!-- 计时器显示 -->
-      <div v-if="chatStartTime" class="timer-display" :class="{ warning: showTimeWarning }">
-        <span class="timer-icon">⏱</span>
-        <span class="timer-value">{{ formatRemainingTime() }}</span>
-      </div>
       <button class="settings-btn" @click="$router.push('/settings')">
         <span>⚙</span>
       </button>
@@ -164,28 +159,6 @@
       </div>
     </Transition>
 
-    <!-- 计时器提示气泡 -->
-    <Transition name="slide-up">
-      <div v-if="showTimeWarning && !chatEnded" class="time-warning-bubble">
-        <span class="warning-icon">⏰</span>
-        <span class="warning-text">聊天即将结束</span>
-        <span class="warning-time">{{ formatRemainingTime() }}</span>
-      </div>
-    </Transition>
-
-    <!-- 聊天结束遮罩 -->
-    <Transition name="fade">
-      <div v-if="chatEnded" class="chat-ended-overlay">
-        <div class="ended-card">
-          <div class="ended-icon">🌙</div>
-          <h2>今日聊天时间已结束</h2>
-          <p>感谢你今天的陪伴，明天再来和我聊天吧~</p>
-          <p class="ended-hint">每天的聊天时间为16分钟</p>
-          <button class="ended-btn primary" @click="$router.push('/experiment/end')">填写后测问卷</button>
-          <button class="ended-btn secondary" @click="$router.push('/settings')">去设置页面</button>
-        </div>
-      </div>
-    </Transition>
   </div>
 </template>
 
@@ -222,15 +195,6 @@ let hasPendingAfterStream = false
 // 用户头像URL（全页面共享，避免重复请求）
 const userAvatarUrl = ref('')
 
-// 聊天计时系统
-const CHAT_DURATION_WARNING = 15 * 60 * 1000  // 15分钟提示
-const CHAT_DURATION_LIMIT = 16 * 60 * 1000    // 16分钟强制结束
-const chatStartTime = ref(null)
-const chatElapsedTime = ref(0)
-const showTimeWarning = ref(false)
-const chatEnded = ref(false)
-let timerInterval = null
-
 // 计算是否可以发送（loading时也可以发，用于中断当前请求）
 const canSend = computed(() => {
   return inputMessage.value.trim().length > 0
@@ -249,90 +213,6 @@ const currentGreeting = computed(() => {
 
 // 生成消息ID
 const generateId = () => Date.now().toString(36) + Math.random().toString(36).substr(2)
-
-// ==================== 聊天计时系统 ====================
-const getTimerStorageKey = () => `chat_timer_${user.value.id}`
-
-const loadTimerState = () => {
-  const key = getTimerStorageKey()
-  const stored = localStorage.getItem(key)
-  if (stored) {
-    try {
-      const data = JSON.parse(stored)
-      // 检查是否是今天的记录（每天重置）
-      const storedDate = new Date(data.startTime).toDateString()
-      const today = new Date().toDateString()
-      if (storedDate === today) {
-        chatStartTime.value = data.startTime
-        // 计算已过时间
-        const elapsed = Date.now() - data.startTime
-        if (elapsed >= CHAT_DURATION_LIMIT) {
-          chatEnded.value = true
-        }
-        return true
-      } else {
-        // 新的一天，清除旧记录
-        localStorage.removeItem(key)
-      }
-    } catch (e) {
-      localStorage.removeItem(key)
-    }
-  }
-  return false
-}
-
-const saveTimerState = () => {
-  if (chatStartTime.value) {
-    const key = getTimerStorageKey()
-    localStorage.setItem(key, JSON.stringify({
-      startTime: chatStartTime.value
-    }))
-  }
-}
-
-const startChatTimer = () => {
-  if (chatStartTime.value) return // 已经开始了
-  
-  chatStartTime.value = Date.now()
-  saveTimerState()
-  startTimerInterval()
-}
-
-const startTimerInterval = () => {
-  if (timerInterval) return
-  
-  timerInterval = setInterval(() => {
-    if (!chatStartTime.value) return
-    
-    chatElapsedTime.value = Date.now() - chatStartTime.value
-    
-    // 15分钟提示
-    if (chatElapsedTime.value >= CHAT_DURATION_WARNING && !showTimeWarning.value && !chatEnded.value) {
-      showTimeWarning.value = true
-      toast.info('聊天即将结束，还有约1分钟哦~', 5000)
-    }
-    
-    // 16分钟强制结束
-    if (chatElapsedTime.value >= CHAT_DURATION_LIMIT && !chatEnded.value) {
-      chatEnded.value = true
-      stopTimerInterval()
-    }
-  }, 1000)
-}
-
-const stopTimerInterval = () => {
-  if (timerInterval) {
-    clearInterval(timerInterval)
-    timerInterval = null
-  }
-}
-
-const formatRemainingTime = () => {
-  const remaining = Math.max(0, CHAT_DURATION_LIMIT - chatElapsedTime.value)
-  const minutes = Math.floor(remaining / 60000)
-  const seconds = Math.floor((remaining % 60000) / 1000)
-  return `${minutes}:${seconds.toString().padStart(2, '0')}`
-}
 
 const normalizeSegment = (content) => {
   if (!content) return ''
@@ -360,21 +240,10 @@ const loadHistory = async () => {
 
 // 发送消息（核心逻辑）
 const sendMessage = async (imageBase64 = null) => {
-  // 检查聊天是否已结束
-  if (chatEnded.value) {
-    toast.error('今日聊天时间已用完，明天再来吧~')
-    return
-  }
-  
   const textContent = inputMessage.value.trim()
   
   // 如果没有内容和图片，直接返回
   if (!textContent && !imageBase64) return
-  
-  // 第一次发送消息时启动计时器
-  if (!chatStartTime.value) {
-    startChatTimer()
-  }
   
   // 清空输入
   inputMessage.value = ''
