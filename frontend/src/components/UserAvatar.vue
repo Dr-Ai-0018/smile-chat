@@ -29,6 +29,7 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
+import { resolveStaticUrl } from '../utils/url'
 
 const props = defineProps({
   size: {
@@ -48,7 +49,8 @@ const localUrl = ref('')
 // 计算最终显示的URL（优先用prop传入的，否则用本地读取的）
 const displayUrl = computed(() => {
   if (imageError.value) return ''
-  return props.avatarUrl || localUrl.value
+  const source = props.avatarUrl || localUrl.value
+  return resolveStaticUrl(source)
 })
 
 // 从localStorage读取（作为备选）
@@ -56,7 +58,6 @@ const loadFromLocal = () => {
   try {
     const user = JSON.parse(localStorage.getItem('user') || '{}')
     if (user.avatar) {
-      // avatar已经是 /uploads/avatars/xxx 格式的相对路径，直接使用
       localUrl.value = user.avatar
     }
   } catch {

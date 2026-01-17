@@ -163,7 +163,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, nextTick, computed, onUnmounted } from 'vue'
+import { ref, onMounted, nextTick, computed, onUnmounted, onActivated } from 'vue'
 import { useRouter } from 'vue-router'
 import { chatAPI, userAPI } from '../api'
 import { marked } from 'marked'
@@ -172,6 +172,9 @@ import { toast, confirm } from '../utils/toast'
 import AiAvatar from '../components/AiAvatar.vue'
 import UserAvatar from '../components/UserAvatar.vue'
 import MessageDecoration from '../components/MessageDecoration.vue'
+import { resolveStaticUrl } from '../utils/url'
+
+defineOptions({ name: 'Chat' })
 
 const router = useRouter()
 const user = ref(JSON.parse(localStorage.getItem('user') || '{}'))
@@ -545,8 +548,7 @@ const syncUserAvatar = async () => {
   try {
     const storedUser = JSON.parse(localStorage.getItem('user') || '{}')
     if (storedUser.avatar) {
-      // avatar已经是 /uploads/avatars/xxx 格式的相对路径，直接使用
-      userAvatarUrl.value = storedUser.avatar
+      userAvatarUrl.value = resolveStaticUrl(storedUser.avatar)
     }
   } catch {}
   
@@ -554,8 +556,7 @@ const syncUserAvatar = async () => {
   try {
     const profile = await userAPI.getProfile()
     if (profile && profile.avatar) {
-      // 直接使用相对路径
-      userAvatarUrl.value = profile.avatar
+      userAvatarUrl.value = resolveStaticUrl(profile.avatar)
       
       // 同步到localStorage
       const storedUser = JSON.parse(localStorage.getItem('user') || '{}')
@@ -570,12 +571,6 @@ const syncUserAvatar = async () => {
 }
 
 onMounted(async () => {
-  // 加载计时器状态
-  loadTimerState()
-  if (chatStartTime.value && !chatEnded.value) {
-    startTimerInterval()
-  }
-  
   // 并行加载历史和同步头像
   await Promise.all([loadHistory(), syncUserAvatar()])
   if (inputElement.value) {
@@ -583,13 +578,18 @@ onMounted(async () => {
   }
 })
 
+onActivated(() => {
+  scrollToBottom()
+  nextTick(() => {
+    inputElement.value?.focus()
+  })
+})
+
 onUnmounted(() => {
   // 清理AbortController
   if (currentAbortController) {
     currentAbortController.abort()
   }
-  // 清理计时器
-  stopTimerInterval()
 })
 </script>
 
@@ -651,41 +651,6 @@ onUnmounted(() => {
 .menu-btn:hover, .settings-btn:hover {
   background: rgba(0, 0, 0, 0.05);
   border-radius: 8px;
-}
-
-/* 计时器显示 */
-.timer-display {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  background: rgba(0, 0, 0, 0.08);
-  padding: 0.4rem 0.75rem;
-  border-radius: 20px;
-  font-size: 0.9rem;
-  font-weight: 600;
-  color: var(--color-dark);
-  transition: all 0.3s ease;
-}
-
-.timer-display.warning {
-  background: linear-gradient(135deg, #ff6b6b, #ee5a5a);
-  color: white;
-  animation: timer-pulse 1s ease-in-out infinite;
-}
-
-@keyframes timer-pulse {
-  0%, 100% { transform: scale(1); }
-  50% { transform: scale(1.05); }
-}
-
-.timer-icon {
-  font-size: 1rem;
-}
-
-.timer-value {
-  font-family: 'JetBrains Mono', monospace;
-  min-width: 45px;
-  text-align: center;
 }
 
 /* 侧边栏 */
