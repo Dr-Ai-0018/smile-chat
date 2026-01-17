@@ -15,7 +15,11 @@ onMounted(() => {
 
 <template>
   <div id="app">
-    <RouterView />
+    <RouterView v-slot="{ Component, route }">
+      <KeepAlive include="Chat">
+        <component :is="Component" :key="route.path" />
+      </KeepAlive>
+    </RouterView>
     <Toast ref="toastRef" />
   </div>
 </template>

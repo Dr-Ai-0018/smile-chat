@@ -79,6 +79,7 @@ import { ref, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { userAPI } from '../api'
 import { toast, confirm } from '../utils/toast'
+import { resolveStaticUrl } from '../utils/url'
 
 const router = useRouter()
 
@@ -98,11 +99,7 @@ const loadingText = ref('')
 const fileInput = ref(null)
 
 // 计算头像URL - 直接使用相对路径
-const avatarUrl = computed(() => {
-  if (!profile.value.avatar) return ''
-  // avatar已经是 /uploads/avatars/xxx 格式的相对路径，直接使用
-  return profile.value.avatar
-})
+const avatarUrl = computed(() => resolveStaticUrl(profile.value.avatar))
 
 // 加载用户信息
 const loadProfile = async () => {

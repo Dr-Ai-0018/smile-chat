@@ -8,7 +8,7 @@ import httpx
 import json
 import os
 from pathlib import Path
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional, Any, Tuple
 from datetime import datetime, timezone, timedelta
 
 # 中国时区 UTC+8
@@ -38,6 +38,40 @@ class AIService:
         self.chat_logger = get_chat_logger()
         self.config = self._load_config()
         self.context_config = self._load_context_config()
+
+    def _build_v2_response_schema(self, for_gemini: bool = False) -> Dict[str, Any]:
+        schema: Dict[str, Any] = {
+            "type": "object",
+            "properties": {
+                "reply": {"type": "string"},
+                "segments": {"type": "array", "items": {"type": "string"}},
+                "did_self_disclosure": {"type": "boolean"},
+                "relationship_stage_judge": {"type": "string", "enum": ["A", "B", "C"]},
+            },
+            "required": ["reply", "segments", "did_self_disclosure", "relationship_stage_judge"],
+        }
+        return schema
+
+    def _build_v2_output_contract_text(self) -> str:
+        return (
+            "你必须只输出一个 JSON 对象，不要输出任何额外文字，不要 Markdown。\n"
+            "字段必须且只能包含：\n"
+            "- reply: string\n"
+            "- segments: array of string\n"
+            "- did_self_disclosure: boolean\n"
+            "- relationship_stage_judge: string enum A/B/C\n"
+        )
+
+    def _build_repair_user_prompt(self, original_user_text: str, bad_text_or_obj: str, error_msg: str) -> str:
+        return (
+            "你刚才的输出不符合后端要求，需要你立刻修复并重写。\n"
+            "要求：只输出一个 JSON 对象，不要任何额外文字，不要 Markdown。\n"
+            "字段必须且只能包含：reply(字符串), segments(字符串数组), did_self_disclosure(布尔), relationship_stage_judge(只能是A/B/C)。\n"
+            f"原始用户输入：{original_user_text}\n"
+            f"错误原因：{error_msg}\n"
+            f"你刚才的输出：{bad_text_or_obj}\n"
+            "现在请直接输出修复后的 JSON："
+        )
 
     def _resolve_channel_env(self, channel: dict) -> dict:
         if not isinstance(channel, dict):
@@ -292,12 +326,23 @@ class AIService:
     async def _call_api_with_fallback(
         self,
         messages: List[Dict],
-        cancel_event: Optional[asyncio.Event] = None
+        cancel_event: Optional[asyncio.Event] = None,
+        *,
+        force_json: bool = False,
+        response_schema: Optional[Dict[str, Any]] = None,
+        response_mime_type: Optional[str] = None,
     ) -> dict:
         """调用API，支持自动切换备份"""
         # 尝试主API
         try:
-            return await self._call_api(self.config["primary"], messages, cancel_event)
+            return await self._call_api(
+                self.config["primary"],
+                messages,
+                cancel_event,
+                force_json=force_json,
+                response_schema=response_schema,
+                response_mime_type=response_mime_type,
+            )
         except asyncio.CancelledError:
             # 新消息到来，主动取消当前请求
             raise
@@ -308,7 +353,14 @@ class AIService:
             for backup in self.config.get("backup", []):
                 try:
                     print(f"切换到备份API: {backup['name']}")
-                    return await self._call_api(backup, messages, cancel_event)
+                    return await self._call_api(
+                        backup,
+                        messages,
+                        cancel_event,
+                        force_json=force_json,
+                        response_schema=response_schema,
+                        response_mime_type=response_mime_type,
+                    )
                 except Exception as backup_e:
                     print(f"备份API {backup['name']} 调用失败: {backup_e}")
                     continue
@@ -334,7 +386,11 @@ class AIService:
         self,
         api_config: dict,
         messages: List[Dict],
-        cancel_event: Optional[asyncio.Event] = None
+        cancel_event: Optional[asyncio.Event] = None,
+        *,
+        force_json: bool = False,
+        response_schema: Optional[Dict[str, Any]] = None,
+        response_mime_type: Optional[str] = None,
     ) -> dict:
         """调用单个API"""
         base_url = (api_config.get("base_url") or "").strip()
@@ -350,83 +406,41 @@ class AIService:
         api_key = self._get_api_key(api_config)
         if not api_key:
             raise ValueError(f"API Key未配置，请设置环境变量: {api_config.get('api_key_env', 'OPENAI_API_KEY')}")
-        
-        # DEBUG: 检查发送给API的消息
-        for i, msg in enumerate(messages):
-            content = msg.get("content")
-            if isinstance(content, list):
-                for j, part in enumerate(content):
-                    if part.get("type") == "image_url":
-                        img_url = part.get("image_url", {}).get("url", "")
-                        print(f"[DEBUG API] Message {i} part {j}: image_url, len={len(img_url)}, preview={img_url[:80]}...")
-        
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            request_coro = client.post(
-                f"{base_url}/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {api_key}",
-                    "Content-Type": "application/json"
-                },
-                json={
-                    "model": model,
-                    "messages": messages,
-                    "temperature": 0.8,
-                    "max_tokens": 2000
-                }
-            )
 
-            if cancel_event:
-                api_task = asyncio.create_task(request_coro)
-                cancel_task = asyncio.create_task(cancel_event.wait())
-                done, _ = await asyncio.wait(
-                    {api_task, cancel_task},
-                    return_when=asyncio.FIRST_COMPLETED
-                )
+        if force_json and response_schema is None:
+            response_schema = self._build_v2_response_schema()
 
-                if cancel_task in done:
-                    api_task.cancel()
-                    try:
-                        await api_task
-                    except asyncio.CancelledError:
-                        pass
-                    raise asyncio.CancelledError("AI调用在请求被替换后取消")
+        def _should_use_gemini() -> bool:
+            api_type = (api_config.get("api_type") or "").strip().lower()
+            if api_type == "gemini":
+                return True
+            if api_type in ("openai", "chat_completions"):
+                return False
 
-                cancel_task.cancel()
-                response = await api_task
-            else:
-                response = await request_coro
-            
-            try:
-                response.raise_for_status()
-            except httpx.HTTPStatusError as e:
-                body = ""
-                try:
-                    body = (e.response.text or "").strip()
-                except Exception:
-                    body = ""
-                if len(body) > 2000:
-                    body = body[:2000] + "..."
-                raise ValueError(
-                    f"上游API错误 {e.response.status_code} ({e.response.reason_phrase}): {body}"
-                ) from e
+            m = (model or "").lower()
+            if "gemini" in m:
+                return True
 
-            result = response.json()
-            
-            # DEBUG: 打印API原始响应
-            print(f"[DEBUG API RESPONSE] keys: {result.keys()}")
+            b = (base_url or "").lower().rstrip("/")
+            if b.endswith("/v1beta") or "/v1beta/" in b:
+                return True
 
+            n = (api_config.get("name") or "").lower()
+            if "gemini" in n:
+                return True
+
+            return False
+
+        def _extract_openai_content(result: dict) -> Tuple[str, str]:
             choices = result.get("choices")
             content = ""
             reasoning_content = ""
             if isinstance(choices, list) and choices:
                 first = choices[0]
-                print(f"[DEBUG API RESPONSE] first choice keys: {first.keys() if isinstance(first, dict) else type(first)}")
                 if isinstance(first, dict):
                     msg = first.get("message")
-                    print(f"[DEBUG API RESPONSE] message keys: {msg.keys() if isinstance(msg, dict) else type(msg)}")
                     if isinstance(msg, dict):
                         c = msg.get("content")
-                        print(f"[DEBUG API RESPONSE] content type: {type(c)}, len: {len(c) if isinstance(c, str) else 'N/A'}, value[:100]: {str(c)[:100] if c else 'None/Empty'}")
                         if isinstance(c, str):
                             content = c
                         elif c is not None:
@@ -435,11 +449,246 @@ class AIService:
                         rc = msg.get("reasoning_content")
                         if isinstance(rc, str):
                             reasoning_content = rc
-            else:
-                print(f"[DEBUG API RESPONSE] No valid choices! choices={choices}")
+            return content, reasoning_content
 
-            print(f"[DEBUG API RESPONSE] Final content len: {len(content)}, reasoning len: {len(reasoning_content)}")
-            return {"content": content, "reasoning_content": reasoning_content}
+        def _extract_gemini_text(result: dict) -> str:
+            try:
+                return str(result["candidates"][0]["content"]["parts"][0]["text"])
+            except Exception:
+                return ""
+
+        def _join_system_messages(msgs: List[Dict]) -> str:
+            parts: List[str] = []
+            for m in msgs:
+                if m.get("role") == "system":
+                    c = m.get("content")
+                    if isinstance(c, str) and c.strip():
+                        parts.append(c.strip())
+            return "\n\n".join(parts)
+
+        def _to_plain_text(content: Any) -> str:
+            if isinstance(content, str):
+                return content
+            if isinstance(content, list):
+                texts: List[str] = []
+                for p in content:
+                    if isinstance(p, dict) and p.get("type") == "text":
+                        t = p.get("text")
+                        if isinstance(t, str) and t:
+                            texts.append(t)
+                return "\n".join(texts)
+            if content is None:
+                return ""
+            return str(content)
+
+        def _parse_data_url(url: str) -> Tuple[Optional[str], Optional[str]]:
+            if not isinstance(url, str) or not url.startswith("data:"):
+                return None, None
+            try:
+                header, b64 = url.split(",", 1)
+                mime = header[5:].split(";", 1)[0].strip() if header.startswith("data:") else ""
+                if not mime:
+                    mime = "application/octet-stream"
+                return mime, b64
+            except Exception:
+                return None, None
+
+        def _to_gemini_parts(content: Any) -> List[Dict[str, Any]]:
+            if isinstance(content, str):
+                t = content.strip("\n")
+                return [{"text": t}] if t else []
+
+            if isinstance(content, list):
+                parts: List[Dict[str, Any]] = []
+                for p in content:
+                    if not isinstance(p, dict):
+                        continue
+                    if p.get("type") == "text":
+                        t = p.get("text")
+                        if isinstance(t, str) and t.strip():
+                            parts.append({"text": t})
+                    elif p.get("type") == "image_url":
+                        img_url = (p.get("image_url") or {}).get("url")
+                        if isinstance(img_url, str):
+                            mime, b64 = _parse_data_url(img_url)
+                            if mime and b64:
+                                parts.append({"inlineData": {"mimeType": mime, "data": b64}})
+                return parts
+
+            if content is None:
+                return []
+
+            s = str(content).strip("\n")
+            return [{"text": s}] if s else []
+
+        async def _post_json(url: str, headers: Dict[str, str], payload: Dict[str, Any]) -> httpx.Response:
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                request_coro = client.post(url, headers=headers, json=payload)
+                if cancel_event:
+                    api_task = asyncio.create_task(request_coro)
+                    cancel_task = asyncio.create_task(cancel_event.wait())
+                    done, _ = await asyncio.wait(
+                        {api_task, cancel_task},
+                        return_when=asyncio.FIRST_COMPLETED
+                    )
+
+                    if cancel_task in done:
+                        api_task.cancel()
+                        try:
+                            await api_task
+                        except asyncio.CancelledError:
+                            pass
+                        raise asyncio.CancelledError("AI调用在请求被替换后取消")
+
+                    cancel_task.cancel()
+                    resp = await api_task
+                    await resp.aread()
+                    return resp
+
+                resp = await request_coro
+                await resp.aread()
+                return resp
+
+        async def _call_openai_chat_completions() -> dict:
+            url = f"{base_url}/chat/completions"
+            headers = {
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            }
+
+            base_payload: Dict[str, Any] = {
+                "model": model,
+                "messages": messages,
+                "temperature": 0.8,
+                "max_tokens": 2000,
+            }
+
+            payloads: List[Dict[str, Any]] = []
+            if force_json:
+                payload1 = dict(base_payload)
+                payload1["response_format"] = {
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "smile_chat_response",
+                        "schema": response_schema,
+                        "strict": True,
+                    },
+                }
+                payloads.append(payload1)
+
+                payload2 = dict(base_payload)
+                payload2["response_format"] = {"type": "json_object"}
+                payloads.append(payload2)
+
+            payloads.append(base_payload)
+
+            last_error: Optional[Exception] = None
+            for payload in payloads:
+                resp = await _post_json(url, headers, payload)
+                upstream_request_id = resp.headers.get("X-Oneapi-Request-Id") or resp.headers.get("X-Request-Id")
+                if resp.status_code == 404:
+                    raise httpx.HTTPStatusError("openai endpoint not found", request=resp.request, response=resp)
+
+                try:
+                    resp.raise_for_status()
+                except httpx.HTTPStatusError as e:
+                    if force_json and e.response.status_code in (400, 422):
+                        last_error = e
+                        continue
+                    raise
+
+                result = resp.json()
+                content, reasoning_content = _extract_openai_content(result)
+                return {
+                    "content": content,
+                    "reasoning_content": reasoning_content,
+                    "upstream_request_id": upstream_request_id,
+                }
+
+            if last_error is not None:
+                raise last_error
+            raise ValueError("OpenAI调用失败")
+
+        async def _call_gemini_generate_content() -> dict:
+            base = base_url.rstrip("/")
+            if base.endswith("/v1beta"):
+                url = f"{base}/models/{model}:generateContent"
+            else:
+                url = f"{base}/v1beta/models/{model}:generateContent"
+            headers = {
+                "Content-Type": "application/json",
+                "x-goog-api-key": api_key,
+                "Authorization": f"Bearer {api_key}",
+            }
+
+            system_text = _join_system_messages(messages)
+            contents: List[Dict[str, Any]] = []
+            for m in messages:
+                role = m.get("role")
+                if role == "system":
+                    continue
+                gemini_role = "model" if role == "assistant" else "user"
+                parts = _to_gemini_parts(m.get("content"))
+                if parts:
+                    contents.append({"role": gemini_role, "parts": parts})
+
+            payload: Dict[str, Any] = {
+                "systemInstruction": {"parts": [{"text": system_text}]},
+                "contents": contents,
+                "generationConfig": {
+                    "temperature": 0.7,
+                },
+            }
+
+            if force_json:
+                payload["generationConfig"]["responseMimeType"] = response_mime_type or "application/json"
+                payload["generationConfig"]["responseSchema"] = response_schema
+
+            resp = await _post_json(url, headers, payload)
+            upstream_request_id = resp.headers.get("X-Oneapi-Request-Id") or resp.headers.get("X-Request-Id")
+            resp.raise_for_status()
+            result = resp.json()
+            content = _extract_gemini_text(result)
+            return {
+                "content": content,
+                "reasoning_content": "",
+                "upstream_request_id": upstream_request_id,
+            }
+        
+        prefer_gemini = _should_use_gemini()
+
+        if prefer_gemini:
+            try:
+                return await _call_gemini_generate_content()
+            except httpx.HTTPStatusError as e:
+                if e.response is not None and e.response.status_code == 404:
+                    return await _call_openai_chat_completions()
+                body = ""
+                try:
+                    body = (e.response.text or "").strip() if e.response is not None else ""
+                except Exception:
+                    body = ""
+                if len(body) > 2000:
+                    body = body[:2000] + "..."
+                raise ValueError(
+                    f"上游API错误 {e.response.status_code if e.response is not None else 'unknown'} ({e.response.reason_phrase if e.response is not None else 'unknown'}): {body}"
+                ) from e
+
+        try:
+            return await _call_openai_chat_completions()
+        except httpx.HTTPStatusError as e:
+            if e.response is not None and e.response.status_code == 404:
+                return await _call_gemini_generate_content()
+            body = ""
+            try:
+                body = (e.response.text or "").strip() if e.response is not None else ""
+            except Exception:
+                body = ""
+            if len(body) > 2000:
+                body = body[:2000] + "..."
+            raise ValueError(
+                f"上游API错误 {e.response.status_code if e.response is not None else 'unknown'} ({e.response.reason_phrase if e.response is not None else 'unknown'}): {body}"
+            ) from e
 
     async def recognize_image(self, image_path: str, user_id: int) -> str:
         """识别图片内容"""
@@ -636,18 +885,51 @@ class AIService:
         
         import time
         start_time = time.time()
-        
-        # 5. 调用API
-        raw_result = await self._call_api_with_fallback(api_messages, cancel_event)
-        raw_content = raw_result.get("content", "")
-        
+
+        schema = self._build_v2_response_schema()
+        raw_result: Dict[str, Any] = {}
+        raw_content = ""
+        parsed: ParsedResponse = self.response_parser.parse("", last_relationship_stage=preset.last_relationship_stage)
+        attempts = 0
+
+        max_attempts = 3
+        while attempts < max_attempts:
+            attempts += 1
+            raw_result = await self._call_api_with_fallback(
+                api_messages,
+                cancel_event,
+                force_json=True,
+                response_schema=schema,
+                response_mime_type="application/json",
+            )
+            raw_content = raw_result.get("content", "") or ""
+
+            parsed = self.response_parser.parse(
+                raw_content,
+                last_relationship_stage=preset.last_relationship_stage,
+            )
+            if parsed.parse_success:
+                break
+
+            if cancel_event and cancel_event.is_set():
+                raise asyncio.CancelledError("聊天请求已被新的消息中断")
+
+            if attempts < max_attempts:
+                repair_prompt = self._build_repair_user_prompt(
+                    original_user_text=user_msg,
+                    bad_text_or_obj=(raw_content[:2000] if raw_content else ""),
+                    error_msg=(parsed.parse_error or "schema validation failed"),
+                )
+                api_messages = [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "system", "content": self._build_v2_output_contract_text()},
+                    {"role": "system", "content": f"【当前状态参数】\n{preset.to_json()}"},
+                ]
+                if ltm_summary:
+                    api_messages.append({"role": "system", "content": f"【关于这位用户的记忆】\n{ltm_summary}"})
+                api_messages.append({"role": "user", "content": repair_prompt})
+
         latency_ms = int((time.time() - start_time) * 1000)
-        
-        # 6. 解析JSON响应
-        parsed = self.response_parser.parse(
-            raw_content,
-            last_relationship_stage=preset.last_relationship_stage
-        )
         
         # 记录响应日志
         self.chat_logger.log_response(
@@ -662,6 +944,7 @@ class AIService:
             parse_error=parsed.parse_error,
             latency_ms=latency_ms,
             model=self.config.get("primary", {}).get("model"),
+            reasoning_content=raw_result.get("reasoning_content", "") or "",
         )
         
         # 7. 更新会话状态
@@ -679,11 +962,14 @@ class AIService:
             "meta": {
                 "did_self_disclosure": parsed.did_self_disclosure,
                 "relationship_stage": parsed.relationship_stage_judge,
+                "relationship_stage_judge": parsed.relationship_stage_judge,
                 "condition": condition,
                 "parse_success": parsed.parse_success,
                 "parse_error": parsed.parse_error,
                 "request_id": request_id,
                 "latency_ms": latency_ms,
+                "upstream_request_id": raw_result.get("upstream_request_id"),
+                "attempts": attempts,
             }
         }
     
@@ -705,6 +991,11 @@ class AIService:
         api_messages.append({
             "role": "system",
             "content": system_prompt
+        })
+
+        api_messages.append({
+            "role": "system",
+            "content": self._build_v2_output_contract_text()
         })
         
         # 2. State 动态状态块 (preset JSON)

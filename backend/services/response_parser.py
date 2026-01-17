@@ -4,7 +4,7 @@ ResponseParser - 解析模型JSON输出
 """
 import json
 import re
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List, Tuple
 from dataclasses import dataclass
 
 
@@ -12,7 +12,7 @@ from dataclasses import dataclass
 class ParsedResponse:
     """解析后的模型响应"""
     reply: str
-    segments: list[str]
+    segments: List[str]
     did_self_disclosure: bool
     relationship_stage_judge: str
     raw_content: str
@@ -24,6 +24,7 @@ class ResponseParser:
     """模型响应解析器"""
     
     VALID_STAGES = {"A", "B", "C"}
+    REQUIRED_KEYS = {"reply", "segments", "did_self_disclosure", "relationship_stage_judge"}
     
     def parse(self, content: str, last_relationship_stage: str = "A") -> ParsedResponse:
         """
@@ -39,28 +40,88 @@ class ResponseParser:
         if not content:
             return self._fallback("", last_relationship_stage, "empty content")
         
-        # 尝试提取JSON
         json_obj = self._extract_json(content)
-        
         if json_obj is None:
             return self._fallback(content, last_relationship_stage, "JSON parse failed")
-        
-        # 提取字段
-        reply = self._get_string(json_obj, "reply", content)
-        segments = self._get_segments(json_obj, reply)
-        did_self_disclosure = self._get_bool(json_obj, "did_self_disclosure", False)
-        relationship_stage = self._get_stage(json_obj, last_relationship_stage)
-        
+
+        if not isinstance(json_obj, dict):
+            return self._fallback(content, last_relationship_stage, f"JSON is not an object: {type(json_obj)}")
+
+        ok, normalized, err = self._validate_schema(json_obj, last_relationship_stage)
+        if not ok or normalized is None:
+            reply_guess = self._get_string(json_obj, "reply", "")
+            segments_guess = self._get_segments(json_obj, reply_guess)
+            did_guess = self._get_bool(json_obj, "did_self_disclosure", False)
+            stage_guess = self._get_stage(json_obj, last_relationship_stage)
+
+            reply_final = reply_guess.strip() if isinstance(reply_guess, str) else ""
+            if not reply_final:
+                reply_final = content.strip()
+
+            segments_final = segments_guess if segments_guess else ([reply_final] if reply_final else [])
+
+            return ParsedResponse(
+                reply=reply_final,
+                segments=segments_final,
+                did_self_disclosure=did_guess,
+                relationship_stage_judge=stage_guess,
+                raw_content=content,
+                parse_success=False,
+                parse_error=err or "schema validation failed",
+            )
+
         return ParsedResponse(
-            reply=reply,
-            segments=segments,
-            did_self_disclosure=did_self_disclosure,
-            relationship_stage_judge=relationship_stage,
+            reply=normalized["reply"],
+            segments=normalized["segments"],
+            did_self_disclosure=normalized["did_self_disclosure"],
+            relationship_stage_judge=normalized["relationship_stage_judge"],
             raw_content=content,
             parse_success=True,
         )
+
+    def _validate_schema(
+        self,
+        obj: Dict[str, Any],
+        last_relationship_stage: str,
+    ) -> Tuple[bool, Optional[Dict[str, Any]], Optional[str]]:
+        keys = set(obj.keys())
+        if keys != self.REQUIRED_KEYS:
+            missing = sorted(self.REQUIRED_KEYS - keys)
+            extra = sorted(keys - self.REQUIRED_KEYS)
+            return False, None, f"schema keys mismatch. missing={missing}, extra={extra}"
+
+        reply = obj.get("reply")
+        if not isinstance(reply, str):
+            return False, None, "reply must be string"
+
+        segments = obj.get("segments")
+        if not (isinstance(segments, list) and all(isinstance(x, str) for x in segments)):
+            return False, None, "segments must be list[str]"
+
+        did_self_disclosure = obj.get("did_self_disclosure")
+        if not isinstance(did_self_disclosure, bool):
+            return False, None, "did_self_disclosure must be bool"
+
+        relationship_stage = obj.get("relationship_stage_judge")
+        if not (isinstance(relationship_stage, str) and relationship_stage.upper() in self.VALID_STAGES):
+            return False, None, "relationship_stage_judge must be one of A/B/C"
+
+        normalized_segments = [s for s in segments if isinstance(s, str) and s.strip()]
+        if not normalized_segments and reply.strip():
+            normalized_segments = [reply.strip()]
+
+        normalized = {
+            "reply": reply.strip(),
+            "segments": normalized_segments,
+            "did_self_disclosure": did_self_disclosure,
+            "relationship_stage_judge": relationship_stage.upper(),
+        }
+        if not normalized["relationship_stage_judge"]:
+            normalized["relationship_stage_judge"] = last_relationship_stage
+
+        return True, normalized, None
     
-    def _extract_json(self, content: str) -> Optional[Dict[str, Any]]:
+    def _extract_json(self, content: str) -> Optional[Any]:
         """尝试从内容中提取JSON对象"""
         content = content.strip()
         
@@ -95,7 +156,7 @@ class ResponseParser:
             return val
         return default
     
-    def _get_segments(self, obj: dict, fallback_reply: str) -> list[str]:
+    def _get_segments(self, obj: dict, fallback_reply: str) -> List[str]:
         """获取segments数组"""
         segments = obj.get("segments")
         if isinstance(segments, list) and len(segments) > 0:
@@ -123,7 +184,7 @@ class ResponseParser:
         """降级策略"""
         reply = content.strip() if content else ""
 
-        segments: list[str] = []
+        segments: List[str] = []
         if reply:
             # 先按空行分段（markdown 段落）
             blocks = [b.strip() for b in re.split(r"\n\s*\n+", reply) if b and b.strip()]

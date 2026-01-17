@@ -4,6 +4,7 @@
 import axios from 'axios'
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api'
+const API_ORIGIN = new URL(API_BASE_URL, window.location.origin).origin
 
 // 创建axios实例
 const client = axios.create({
@@ -45,4 +46,5 @@ client.interceptors.response.use(
   }
 )
 
+export { API_BASE_URL, API_ORIGIN }
 export default client
