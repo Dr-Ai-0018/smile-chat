@@ -107,3 +107,66 @@ export const configAPI = {
   // 获取API配置
   getApiConfig: () => client.get('/config/api')
 }
+
+export const promptAPI = {
+  // 用户端：评估是否需要展示提示
+  evaluate: (sinceResetUserMessageCount) => 
+    client.post('/prompts/evaluate', { since_reset_user_message_count: sinceResetUserMessageCount }),
+  
+  // 用户端：记录提示已展示
+  recordShown: (groupId, clientRequestId, chatCountSnapshot = 0) =>
+    client.post(`/prompts/${groupId}/shown`, { 
+      client_request_id: clientRequestId, 
+      chat_count_snapshot: chatCountSnapshot 
+    }),
+  
+  // 用户端：提交回答
+  submitAnswer: (groupId, clientRequestId, answer, chatCountSnapshot = 0) =>
+    client.post(`/prompts/${groupId}/answer`, { 
+      client_request_id: clientRequestId, 
+      answer, 
+      chat_count_snapshot: chatCountSnapshot 
+    }),
+  
+  // 用户端：跳过提示
+  skip: (groupId, clientRequestId, chatCountSnapshot = 0) =>
+    client.post(`/prompts/${groupId}/skip`, { 
+      client_request_id: clientRequestId, 
+      chat_count_snapshot: chatCountSnapshot 
+    }),
+  
+  // 用户端：重置计数器
+  resetCounter: (promptGroupId = null) =>
+    client.post('/prompts/reset-counter', { prompt_group_id: promptGroupId }),
+
+  // 管理端：获取提示组列表
+  getGroups: (includeDeleted = false) => 
+    client.get(`/admin/prompt-groups?include_deleted=${includeDeleted}`),
+  
+  // 管理端：创建提示组
+  createGroup: (data) => client.post('/admin/prompt-groups', data),
+  
+  // 管理端：更新提示组
+  updateGroup: (groupId, data) => client.put(`/admin/prompt-groups/${groupId}`, data),
+  
+  // 管理端：删除提示组
+  deleteGroup: (groupId, hard = false) => 
+    client.delete(`/admin/prompt-groups/${groupId}?hard=${hard}`),
+  
+  // 管理端：获取统计数据
+  getStats: () => client.get('/admin/prompt-stats'),
+  
+  // 管理端：获取事件日志
+  getEvents: (params = {}) => {
+    const query = new URLSearchParams()
+    if (params.user_id) query.set('user_id', params.user_id)
+    if (params.group_id) query.set('group_id', params.group_id)
+    if (params.event_type) query.set('event_type', params.event_type)
+    if (params.limit) query.set('limit', params.limit)
+    return client.get(`/admin/prompt-events?${query.toString()}`)
+  },
+  
+  // 管理端：获取回答列表
+  getAnswers: (groupId, limit = 100) => 
+    client.get(`/admin/prompt-groups/${groupId}/answers?limit=${limit}`)
+}

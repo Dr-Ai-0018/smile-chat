@@ -462,3 +462,224 @@ class JsonStorage:
 
             self._write_json_atomic_unlocked(self._users_file, users_data)
             return user
+
+    # ==================== Prompt System ====================
+    def _prompt_groups_file(self) -> Path:
+        return self.base_dir / "prompt_groups.json"
+
+    def _user_prompt_states_file(self) -> Path:
+        return self.base_dir / "user_prompt_states.json"
+
+    def _prompt_events_file(self) -> Path:
+        return self.base_dir / "prompt_events.json"
+
+    def _read_prompt_groups_unlocked(self) -> Dict[str, Any]:
+        data = self._read_json_unlocked(self._prompt_groups_file(), {"next_id": 1, "items": []})
+        if not isinstance(data, dict):
+            data = {"next_id": 1, "items": []}
+        if not isinstance(data.get("items"), list):
+            data["items"] = []
+        return data
+
+    def _read_user_prompt_states_unlocked(self) -> Dict[str, Any]:
+        data = self._read_json_unlocked(self._user_prompt_states_file(), {"items": []})
+        if not isinstance(data, dict):
+            data = {"items": []}
+        if not isinstance(data.get("items"), list):
+            data["items"] = []
+        return data
+
+    def _read_prompt_events_unlocked(self) -> Dict[str, Any]:
+        data = self._read_json_unlocked(self._prompt_events_file(), {"next_id": 1, "items": []})
+        if not isinstance(data, dict):
+            data = {"next_id": 1, "items": []}
+        if not isinstance(data.get("items"), list):
+            data["items"] = []
+        return data
+
+    # --- PromptGroup CRUD ---
+    def create_prompt_group(self, group_data: Dict[str, Any]) -> Dict[str, Any]:
+        path = self._prompt_groups_file()
+        with self._lock_paths([path]):
+            data = self._read_prompt_groups_unlocked()
+            group_id = data.get("next_id", 1)
+            group = {
+                "id": group_id,
+                "type": group_data.get("type", "daily"),
+                "name": group_data.get("name", ""),
+                "enabled": group_data.get("enabled", True),
+                "threshold": group_data.get("threshold", 10),
+                "frequency_mode": group_data.get("frequency_mode", "once"),
+                "repeat_every_n": group_data.get("repeat_every_n"),
+                "max_times": group_data.get("max_times"),
+                "cooldown_seconds": group_data.get("cooldown_seconds"),
+                "priority": group_data.get("priority", 0),
+                "content": group_data.get("content", {"title": "", "body": ""}),
+                "question": group_data.get("question"),
+                "created_at": get_china_now().isoformat(),
+                "updated_at": get_china_now().isoformat(),
+                "deleted": False,
+            }
+            data["items"].append(group)
+            data["next_id"] = group_id + 1
+            self._write_json_atomic_unlocked(path, data)
+            return group
+
+    def get_prompt_groups(self, include_deleted: bool = False) -> List[Dict[str, Any]]:
+        path = self._prompt_groups_file()
+        data = self.read_json(path, {"next_id": 1, "items": []})
+        items = data.get("items", [])
+        if include_deleted:
+            return list(items)
+        return [g for g in items if not g.get("deleted")]
+
+    def get_prompt_group_by_id(self, group_id: int) -> Optional[Dict[str, Any]]:
+        for g in self.get_prompt_groups(include_deleted=True):
+            if g.get("id") == group_id:
+                return g
+        return None
+
+    def update_prompt_group(self, group_id: int, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        path = self._prompt_groups_file()
+        with self._lock_paths([path]):
+            data = self._read_prompt_groups_unlocked()
+            for group in data["items"]:
+                if group.get("id") == group_id:
+                    for k, v in updates.items():
+                        if k not in ("id", "created_at"):
+                            group[k] = v
+                    group["updated_at"] = get_china_now().isoformat()
+                    self._write_json_atomic_unlocked(path, data)
+                    return group
+        return None
+
+    def delete_prompt_group(self, group_id: int, hard: bool = False) -> bool:
+        path = self._prompt_groups_file()
+        with self._lock_paths([path]):
+            data = self._read_prompt_groups_unlocked()
+            if hard:
+                new_items = [g for g in data["items"] if g.get("id") != group_id]
+                if len(new_items) == len(data["items"]):
+                    return False
+                data["items"] = new_items
+            else:
+                found = False
+                for group in data["items"]:
+                    if group.get("id") == group_id:
+                        group["deleted"] = True
+                        group["updated_at"] = get_china_now().isoformat()
+                        found = True
+                        break
+                if not found:
+                    return False
+            self._write_json_atomic_unlocked(path, data)
+            return True
+
+    # --- UserPromptState ---
+    def get_user_prompt_state(self, user_id: int, group_id: int) -> Optional[Dict[str, Any]]:
+        path = self._user_prompt_states_file()
+        data = self.read_json(path, {"items": []})
+        for state in data.get("items", []):
+            if state.get("user_id") == user_id and state.get("prompt_group_id") == group_id:
+                return state
+        return None
+
+    def get_user_prompt_states(self, user_id: int) -> List[Dict[str, Any]]:
+        path = self._user_prompt_states_file()
+        data = self.read_json(path, {"items": []})
+        return [s for s in data.get("items", []) if s.get("user_id") == user_id]
+
+    def upsert_user_prompt_state(self, user_id: int, group_id: int, updates: Dict[str, Any]) -> Dict[str, Any]:
+        path = self._user_prompt_states_file()
+        with self._lock_paths([path]):
+            data = self._read_user_prompt_states_unlocked()
+            state = None
+            for s in data["items"]:
+                if s.get("user_id") == user_id and s.get("prompt_group_id") == group_id:
+                    state = s
+                    break
+            if state is None:
+                state = {
+                    "user_id": user_id,
+                    "prompt_group_id": group_id,
+                    "times_triggered": 0,
+                    "times_shown": 0,
+                    "times_answered": 0,
+                    "last_shown_at": None,
+                    "completed": False,
+                    "last_reset_msg_count": 0,
+                }
+                data["items"].append(state)
+            for k, v in updates.items():
+                state[k] = v
+            self._write_json_atomic_unlocked(path, data)
+            return state
+
+    # --- PromptEvent (append-only log) ---
+    def append_prompt_event(
+        self,
+        user_id: int,
+        group_id: int,
+        event_type: str,
+        chat_count_snapshot: int = 0,
+        answer: Optional[Dict[str, Any]] = None,
+        client_request_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        path = self._prompt_events_file()
+        with self._lock_paths([path]):
+            data = self._read_prompt_events_unlocked()
+            event_id = data.get("next_id", 1)
+            event = {
+                "id": event_id,
+                "user_id": user_id,
+                "prompt_group_id": group_id,
+                "event_type": event_type,
+                "chat_count_snapshot": chat_count_snapshot,
+                "answer": answer,
+                "client_request_id": client_request_id,
+                "created_at": get_china_now().isoformat(),
+            }
+            data["items"].append(event)
+            data["next_id"] = event_id + 1
+            self._write_json_atomic_unlocked(path, data)
+            return event
+
+    def get_prompt_events(
+        self,
+        user_id: Optional[int] = None,
+        group_id: Optional[int] = None,
+        event_type: Optional[str] = None,
+        limit: int = 100,
+    ) -> List[Dict[str, Any]]:
+        path = self._prompt_events_file()
+        data = self.read_json(path, {"next_id": 1, "items": []})
+        items = data.get("items", [])
+        result = []
+        for e in reversed(items):
+            if user_id is not None and e.get("user_id") != user_id:
+                continue
+            if group_id is not None and e.get("prompt_group_id") != group_id:
+                continue
+            if event_type is not None and e.get("event_type") != event_type:
+                continue
+            result.append(e)
+            if len(result) >= limit:
+                break
+        return result
+
+    def check_duplicate_event(self, client_request_id: str) -> bool:
+        if not client_request_id:
+            return False
+        path = self._prompt_events_file()
+        data = self.read_json(path, {"next_id": 1, "items": []})
+        for e in data.get("items", []):
+            if e.get("client_request_id") == client_request_id:
+                return True
+        return False
+
+    def count_user_messages_since_reset(self, user_id: int, last_reset_msg_count: int) -> int:
+        path = self._chat_history_file(user_id)
+        data = self.read_json(path, {"next_id": 1, "items": []})
+        items = data.get("items", [])
+        user_msg_count = sum(1 for m in items if m.get("role") == "user")
+        return max(0, user_msg_count - last_reset_msg_count)
