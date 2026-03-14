@@ -326,6 +326,59 @@
           </div>
         </div>
       </section>
+
+      <!-- 提示系统 -->
+      <section v-if="activeTab === 'prompts'" class="panel prompts-panel">
+        <div class="panel-header">
+          <h2>提示系统</h2>
+          <button class="create-btn" @click="openCreatePromptModal">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+            </svg>
+            新建提示组
+          </button>
+        </div>
+
+        <div v-if="promptGroups.length === 0" class="empty-state">
+          <p>暂无提示组，点击上方按钮创建</p>
+        </div>
+
+        <div v-else class="prompt-groups-list">
+          <div v-for="group in promptGroups" :key="group.id" class="prompt-group-card" :class="{ disabled: !group.enabled }">
+            <div class="pg-header">
+              <div class="pg-title-row">
+                <span class="pg-type-badge" :class="group.type">{{ formatPromptType(group.type) }}</span>
+                <h4 class="pg-name">{{ group.name }}</h4>
+                <span v-if="!group.enabled" class="pg-disabled-badge">已停用</span>
+              </div>
+              <div class="pg-actions">
+                <button class="pg-btn toggle" @click="togglePromptEnabled(group)" :title="group.enabled ? '停用' : '启用'">
+                  {{ group.enabled ? '⏸' : '▶' }}
+                </button>
+                <button class="pg-btn edit" @click="openEditPromptModal(group)" title="编辑">✏️</button>
+                <button class="pg-btn answers" @click="viewPromptAnswers(group)" title="查看回答">📊</button>
+                <button class="pg-btn delete" @click="deletePromptGroup(group)" title="删除">🗑️</button>
+              </div>
+            </div>
+            <div class="pg-body">
+              <div class="pg-info">
+                <span><strong>触发阈值:</strong> {{ group.threshold }} 条消息</span>
+                <span><strong>触发模式:</strong> {{ group.frequency_mode === 'once' ? '仅一次' : '重复触发' }}</span>
+                <span><strong>题型:</strong> {{ formatQuestionKind(group.question?.kind || 'ack') }}</span>
+              </div>
+              <div class="pg-content-preview">
+                <strong>标题:</strong> {{ group.content?.title || '(无)' }}<br/>
+                <strong>内容:</strong> {{ (group.content?.body || '').substring(0, 100) }}{{ (group.content?.body?.length || 0) > 100 ? '...' : '' }}
+              </div>
+              <div class="pg-stats">
+                <span>展示 {{ getStatForGroup(group.id).shown_count || 0 }} 次</span>
+                <span>回答 {{ getStatForGroup(group.id).answered_count || 0 }} 次</span>
+                <span>转化率 {{ ((getStatForGroup(group.id).conversion_rate || 0) * 100).toFixed(1) }}%</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
     </main>
 
     <!-- 用户详情弹窗 -->
@@ -420,12 +473,155 @@
         </div>
       </div>
     </Transition>
+
+    <!-- 提示组编辑弹窗 -->
+    <Transition name="modal">
+      <div v-if="showPromptModal" class="modal-overlay" @click.self="showPromptModal = false">
+        <div class="modal prompt-edit-modal">
+          <div class="modal-header">
+            <h3>{{ editingPromptGroup ? '编辑提示组' : '新建提示组' }}</h3>
+            <button class="close-btn" @click="showPromptModal = false">×</button>
+          </div>
+          <div class="modal-body prompt-form">
+            <div class="form-row">
+              <label>名称 *</label>
+              <input v-model="promptForm.name" type="text" placeholder="提示组名称" />
+            </div>
+            <div class="form-row">
+              <label>类型</label>
+              <select v-model="promptForm.type">
+                <option value="daily">日常提醒</option>
+                <option value="survey">问卷提醒</option>
+                <option value="feedback">反馈提醒</option>
+              </select>
+            </div>
+            <div class="form-row">
+              <label>触发阈值</label>
+              <input v-model.number="promptForm.threshold" type="number" min="1" />
+              <span class="form-hint">用户发送多少条消息后触发</span>
+            </div>
+            <div class="form-row">
+              <label>触发模式</label>
+              <select v-model="promptForm.frequency_mode">
+                <option value="once">仅触发一次</option>
+                <option value="repeat_every_n">重复触发</option>
+              </select>
+            </div>
+            <div v-if="promptForm.frequency_mode === 'repeat_every_n'" class="form-row">
+              <label>重复间隔</label>
+              <input v-model.number="promptForm.repeat_every_n" type="number" min="1" placeholder="每隔N条" />
+            </div>
+            <div class="form-row">
+              <label>最大展示次数</label>
+              <input v-model.number="promptForm.max_times" type="number" min="1" placeholder="不限制留空" />
+            </div>
+            <div class="form-row">
+              <label>优先级</label>
+              <input v-model.number="promptForm.priority" type="number" />
+              <span class="form-hint">数字越大优先级越高</span>
+            </div>
+            <hr class="form-divider" />
+            <div class="form-row">
+              <label>弹窗标题</label>
+              <input v-model="promptForm.content.title" type="text" placeholder="弹窗标题" />
+            </div>
+            <div class="form-row">
+              <label>弹窗内容</label>
+              <textarea v-model="promptForm.content.body" rows="3" placeholder="弹窗正文内容"></textarea>
+            </div>
+            <hr class="form-divider" />
+            <div class="form-row">
+              <label>题型</label>
+              <select v-model="promptForm.question.kind">
+                <option value="ack">确认按钮（知道了）</option>
+                <option value="choice_single">单选题</option>
+                <option value="choice_multi">多选题</option>
+                <option value="text">填空题</option>
+              </select>
+            </div>
+            <div v-if="promptForm.question.kind === 'choice_single' || promptForm.question.kind === 'choice_multi'" class="form-row">
+              <label>选项（每行一个）</label>
+              <textarea 
+                :value="(promptForm.question.options || []).join('\n')"
+                @input="promptForm.question.options = $event.target.value.split('\n').filter(s => s.trim())"
+                rows="4" 
+                placeholder="选项1&#10;选项2&#10;选项3"
+              ></textarea>
+            </div>
+            <div v-if="promptForm.question.kind === 'text'" class="form-row">
+              <label>输入框占位符</label>
+              <input v-model="promptForm.question.placeholder" type="text" placeholder="请输入..." />
+            </div>
+            <div class="form-row">
+              <label>按钮文案</label>
+              <input v-model="promptForm.question.submit_text" type="text" placeholder="确定" />
+            </div>
+            <div class="form-row checkbox-row">
+              <label>
+                <input type="checkbox" v-model="promptForm.question.required" />
+                必须回答（不可跳过）
+              </label>
+            </div>
+            <div class="form-row checkbox-row">
+              <label>
+                <input type="checkbox" v-model="promptForm.enabled" />
+                立即启用
+              </label>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button class="modal-btn primary" @click="savePromptGroup" :disabled="loading">
+              {{ loading ? '保存中...' : '保存' }}
+            </button>
+            <button class="modal-btn" @click="showPromptModal = false">取消</button>
+          </div>
+        </div>
+      </div>
+    </Transition>
+
+    <!-- 查看回答弹窗 -->
+    <Transition name="modal">
+      <div v-if="showAnswersModal" class="modal-overlay" @click.self="showAnswersModal = false">
+        <div class="modal answers-modal">
+          <div class="modal-header">
+            <h3>回答记录 - {{ viewingGroupName }}</h3>
+            <button class="close-btn" @click="showAnswersModal = false">×</button>
+          </div>
+          <div class="modal-body">
+            <div v-if="viewingAnswers.length === 0" class="empty-state">
+              <p>暂无回答记录</p>
+            </div>
+            <div v-else class="answers-list">
+              <div v-for="ans in viewingAnswers" :key="ans.event_id" class="answer-item">
+                <div class="answer-header">
+                  <span class="answer-user">{{ ans.username || '用户#' + ans.user_id }}</span>
+                  <span class="answer-time">{{ formatDate(ans.created_at) }}</span>
+                </div>
+                <div class="answer-content">
+                  <template v-if="ans.answer?.ok">✓ 已确认</template>
+                  <template v-else-if="ans.answer?.selected">
+                    选择: {{ ans.answer.selected.join(', ') }}
+                  </template>
+                  <template v-else-if="ans.answer?.text">
+                    {{ ans.answer.text }}
+                  </template>
+                  <template v-else>{{ JSON.stringify(ans.answer) }}</template>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button class="modal-btn" @click="showAnswersModal = false">关闭</button>
+          </div>
+        </div>
+      </div>
+    </Transition>
   </div>
 </template>
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
-import { adminAPI, configAPI } from '../api'
+import { adminAPI, configAPI, promptAPI } from '../api'
 import { toast, confirm } from '../utils/toast'
 
 // 标签页配置
@@ -433,6 +629,7 @@ const tabs = [
   { id: 'dashboard', label: '仪表盘', icon: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg>' },
   { id: 'users', label: '用户管理', icon: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>' },
   { id: 'memory', label: '记忆管理', icon: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/></svg>' },
+  { id: 'prompts', label: '提示系统', icon: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/><path d="M8 9h8M8 13h6"/></svg>' },
   { id: 'invites', label: '邀请码', icon: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M7 8h10M7 12h10M7 16h6"/></svg>' },
   { id: 'config', label: '系统配置', icon: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>' }
 ]
@@ -470,6 +667,28 @@ const contextConfig = ref({
   system_prompt_tokens: 100,
   reserve_tokens: 1000
 })
+
+// 提示系统
+const promptGroups = ref([])
+const promptStats = ref([])
+const showPromptModal = ref(false)
+const editingPromptGroup = ref(null)
+const promptForm = ref({
+  type: 'daily',
+  name: '',
+  enabled: true,
+  threshold: 10,
+  frequency_mode: 'once',
+  repeat_every_n: null,
+  max_times: null,
+  cooldown_seconds: null,
+  priority: 0,
+  content: { title: '', body: '' },
+  question: { kind: 'ack', required: false, options: [], placeholder: '', submit_text: '知道了' }
+})
+const showAnswersModal = ref(false)
+const viewingAnswers = ref([])
+const viewingGroupName = ref('')
 
 // 过滤用户
 const filteredUsers = computed(() => {
@@ -750,6 +969,150 @@ const saveContextConfig = async () => {
   }
 }
 
+// ==================== 提示系统 ====================
+const loadPromptGroups = async () => {
+  try {
+    const res = await promptAPI.getGroups()
+    promptGroups.value = res.prompt_groups || []
+  } catch (err) {
+    console.error('加载提示组失败:', err)
+  }
+}
+
+const loadPromptStats = async () => {
+  try {
+    const res = await promptAPI.getStats()
+    promptStats.value = res.stats || []
+  } catch (err) {
+    console.error('加载提示统计失败:', err)
+  }
+}
+
+const openCreatePromptModal = () => {
+  editingPromptGroup.value = null
+  promptForm.value = {
+    type: 'daily',
+    name: '',
+    enabled: true,
+    threshold: 10,
+    frequency_mode: 'once',
+    repeat_every_n: null,
+    max_times: null,
+    cooldown_seconds: null,
+    priority: 0,
+    content: { title: '', body: '' },
+    question: { kind: 'ack', required: false, options: [], placeholder: '', submit_text: '知道了' }
+  }
+  showPromptModal.value = true
+}
+
+const openEditPromptModal = (group) => {
+  editingPromptGroup.value = group
+  promptForm.value = {
+    type: group.type || 'daily',
+    name: group.name || '',
+    enabled: group.enabled !== false,
+    threshold: group.threshold || 10,
+    frequency_mode: group.frequency_mode || 'once',
+    repeat_every_n: group.repeat_every_n,
+    max_times: group.max_times,
+    cooldown_seconds: group.cooldown_seconds,
+    priority: group.priority || 0,
+    content: { ...group.content } || { title: '', body: '' },
+    question: group.question ? { ...group.question } : { kind: 'ack', required: false, options: [], placeholder: '', submit_text: '知道了' }
+  }
+  showPromptModal.value = true
+}
+
+const savePromptGroup = async () => {
+  if (!promptForm.value.name.trim()) {
+    toast.error('请输入提示组名称')
+    return
+  }
+
+  if (promptForm.value.frequency_mode === 'repeat_every_n') {
+    const n = Number(promptForm.value.repeat_every_n)
+    if (!Number.isFinite(n) || n < 1) {
+      toast.error('重复触发需要填写“重复间隔（每隔N条）”且至少为1')
+      return
+    }
+  }
+  
+  loading.value = true
+  try {
+    const data = { ...promptForm.value }
+    if (editingPromptGroup.value) {
+      await promptAPI.updateGroup(editingPromptGroup.value.id, data)
+      toast.success('提示组已更新')
+    } else {
+      await promptAPI.createGroup(data)
+      toast.success('提示组已创建')
+    }
+    showPromptModal.value = false
+    await loadPromptGroups()
+    await loadPromptStats()
+  } catch (err) {
+    toast.error('保存提示组失败')
+  } finally {
+    loading.value = false
+  }
+}
+
+const deletePromptGroup = async (group) => {
+  const confirmed = await confirm({
+    title: '删除提示组',
+    message: `确定要删除提示组 "${group.name}" 吗？`,
+    type: 'danger',
+    confirmText: '确认删除'
+  })
+  
+  if (confirmed) {
+    try {
+      await promptAPI.deleteGroup(group.id)
+      toast.success('提示组已删除')
+      await loadPromptGroups()
+      await loadPromptStats()
+    } catch (err) {
+      toast.error('删除失败')
+    }
+  }
+}
+
+const togglePromptEnabled = async (group) => {
+  try {
+    await promptAPI.updateGroup(group.id, { enabled: !group.enabled })
+    group.enabled = !group.enabled
+    toast.success(group.enabled ? '已启用' : '已停用')
+  } catch (err) {
+    toast.error('操作失败')
+  }
+}
+
+const viewPromptAnswers = async (group) => {
+  viewingGroupName.value = group.name
+  try {
+    const res = await promptAPI.getAnswers(group.id, 200)
+    viewingAnswers.value = res.answers || []
+    showAnswersModal.value = true
+  } catch (err) {
+    toast.error('加载回答失败')
+  }
+}
+
+const formatPromptType = (type) => {
+  const map = { daily: '日常提醒', survey: '问卷提醒', feedback: '反馈提醒' }
+  return map[type] || type
+}
+
+const formatQuestionKind = (kind) => {
+  const map = { ack: '确认按钮', choice_single: '单选题', choice_multi: '多选题', text: '填空题' }
+  return map[kind] || kind
+}
+
+const getStatForGroup = (groupId) => {
+  return promptStats.value.find(s => s.group_id === groupId) || {}
+}
+
 // 格式化
 const formatDate = (dateString) => {
   if (!dateString) return '-'
@@ -778,6 +1141,8 @@ onMounted(() => {
   loadInviteCodeSetting()
   loadAllMemory()
   loadContextConfig()
+  loadPromptGroups()
+  loadPromptStats()
 })
 </script>
 
@@ -1778,5 +2143,243 @@ onMounted(() => {
   .invite-count-input {
     flex: 1;
   }
+}
+
+/* ==================== 提示系统样式 ==================== */
+.prompts-panel .empty-state {
+  text-align: center;
+  padding: 3rem;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.prompt-groups-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.prompt-group-card {
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  overflow: hidden;
+  transition: all 0.2s;
+}
+
+.prompt-group-card:hover {
+  border-color: rgba(255, 215, 0, 0.3);
+}
+
+.prompt-group-card.disabled {
+  opacity: 0.6;
+}
+
+.pg-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem 1.25rem;
+  background: rgba(255, 255, 255, 0.05);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.pg-title-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.pg-type-badge {
+  padding: 0.25rem 0.6rem;
+  border-radius: 6px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.pg-type-badge.daily {
+  background: #FFF3CD;
+  color: #856404;
+}
+
+.pg-type-badge.survey {
+  background: #CCE5FF;
+  color: #004085;
+}
+
+.pg-type-badge.feedback {
+  background: #D4EDDA;
+  color: #155724;
+}
+
+.pg-name {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: #fff;
+}
+
+.pg-disabled-badge {
+  padding: 0.2rem 0.5rem;
+  background: rgba(255, 0, 0, 0.2);
+  color: #ff6b6b;
+  border-radius: 4px;
+  font-size: 0.7rem;
+}
+
+.pg-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.pg-btn {
+  background: rgba(255, 255, 255, 0.1);
+  border: none;
+  padding: 0.4rem 0.6rem;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-size: 0.9rem;
+}
+
+.pg-btn:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.pg-btn.delete:hover {
+  background: rgba(255, 0, 0, 0.3);
+}
+
+.pg-body {
+  padding: 1rem 1.25rem;
+}
+
+.pg-info {
+  display: flex;
+  gap: 1.5rem;
+  margin-bottom: 0.75rem;
+  font-size: 0.85rem;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.pg-info strong {
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.pg-content-preview {
+  background: rgba(0, 0, 0, 0.2);
+  padding: 0.75rem;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  color: rgba(255, 255, 255, 0.7);
+  margin-bottom: 0.75rem;
+}
+
+.pg-stats {
+  display: flex;
+  gap: 1.5rem;
+  font-size: 0.8rem;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+/* 提示组编辑弹窗 */
+.prompt-edit-modal {
+  max-width: 600px;
+  max-height: 85vh;
+  overflow-y: auto;
+}
+
+.prompt-form .form-row {
+  margin-bottom: 1rem;
+}
+
+.prompt-form .form-row label {
+  display: block;
+  margin-bottom: 0.4rem;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.prompt-form input[type="text"],
+.prompt-form input[type="number"],
+.prompt-form select,
+.prompt-form textarea {
+  width: 100%;
+  padding: 0.6rem 0.8rem;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 8px;
+  color: #fff;
+  font-size: 0.95rem;
+}
+
+.prompt-form input:focus,
+.prompt-form select:focus,
+.prompt-form textarea:focus {
+  outline: none;
+  border-color: #ffd700;
+}
+
+.prompt-form .form-hint {
+  display: block;
+  margin-top: 0.3rem;
+  font-size: 0.8rem;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.prompt-form .form-divider {
+  border: none;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  margin: 1.5rem 0;
+}
+
+.prompt-form .checkbox-row label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+}
+
+.prompt-form .checkbox-row input[type="checkbox"] {
+  width: auto;
+  accent-color: #ffd700;
+}
+
+/* 回答列表弹窗 */
+.answers-modal {
+  max-width: 600px;
+  max-height: 80vh;
+}
+
+.answers-list {
+  max-height: 50vh;
+  overflow-y: auto;
+}
+
+.answer-item {
+  background: rgba(0, 0, 0, 0.2);
+  padding: 0.75rem 1rem;
+  border-radius: 8px;
+  margin-bottom: 0.5rem;
+}
+
+.answer-header {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 0.5rem;
+  font-size: 0.85rem;
+}
+
+.answer-user {
+  font-weight: 600;
+  color: #ffd700;
+}
+
+.answer-time {
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.answer-content {
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 0.95rem;
 }
 </style>

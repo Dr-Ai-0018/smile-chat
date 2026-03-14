@@ -159,19 +159,28 @@
       </div>
     </Transition>
 
+    <!-- 提示弹窗 -->
+    <PromptDialog
+      :visible="showPromptDialog"
+      :prompt="currentPrompt"
+      @submit="handlePromptSubmit"
+      @skip="handlePromptSkip"
+    />
+
   </div>
 </template>
 
 <script setup>
 import { ref, onMounted, nextTick, computed, onUnmounted, onActivated } from 'vue'
 import { useRouter } from 'vue-router'
-import { chatAPI, userAPI } from '../api'
+import { chatAPI, userAPI, promptAPI } from '../api'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import { toast, confirm } from '../utils/toast'
 import AiAvatar from '../components/AiAvatar.vue'
 import UserAvatar from '../components/UserAvatar.vue'
 import MessageDecoration from '../components/MessageDecoration.vue'
+import PromptDialog from '../components/PromptDialog.vue'
 import { resolveStaticUrl } from '../utils/url'
 
 defineOptions({ name: 'Chat' })
@@ -197,6 +206,11 @@ let hasPendingAfterStream = false
 
 // 用户头像URL（全页面共享，避免重复请求）
 const userAvatarUrl = ref('')
+
+// 提示系统状态
+const showPromptDialog = ref(false)
+const currentPrompt = ref(null)
+const promptQueue = ref([])
 
 // 计算是否可以发送（loading时也可以发，用于中断当前请求）
 const canSend = computed(() => {
@@ -342,6 +356,9 @@ const requestAIResponse = async () => {
     }
     
     isStreaming.value = false
+    
+    // AI回复完成后，评估是否需要展示提示
+    setTimeout(() => evaluatePrompts(), 500)
     
     // 如果期间有新的用户消息，按顺序在当前回复完成后再请求AI
     if (hasPendingAfterStream) {
@@ -568,6 +585,80 @@ const syncUserAvatar = async () => {
   } catch {
     // 静默失败，使用localStorage中的缓存
   }
+}
+
+// ==================== 提示系统逻辑 ====================
+const evaluatePrompts = async () => {
+  try {
+    const response = await promptAPI.evaluate(0)
+    const prompts = response.prompts_to_show || []
+    
+    if (prompts.length > 0) {
+      // 加入队列
+      promptQueue.value = prompts
+      showNextPrompt()
+    }
+  } catch (err) {
+    console.error('评估提示失败:', err)
+  }
+}
+
+const showNextPrompt = () => {
+  if (promptQueue.value.length === 0) {
+    showPromptDialog.value = false
+    currentPrompt.value = null
+    return
+  }
+  
+  currentPrompt.value = promptQueue.value.shift()
+  showPromptDialog.value = true
+  
+  // 记录展示
+  const clientRequestId = generateId()
+  currentPrompt.value._clientRequestId = clientRequestId
+  promptAPI.recordShown(
+    currentPrompt.value.prompt_group_id,
+    clientRequestId,
+    0
+  ).catch(err => console.error('记录展示失败:', err))
+}
+
+const handlePromptSubmit = async (answer) => {
+  if (!currentPrompt.value) return
+  
+  const groupId = currentPrompt.value.prompt_group_id
+  const clientRequestId = generateId()
+  
+  try {
+    await promptAPI.submitAnswer(groupId, clientRequestId, answer, 0)
+  } catch (err) {
+    console.error('提交回答失败:', err)
+  }
+  
+  showPromptDialog.value = false
+  currentPrompt.value = null
+  
+  // 展示下一个提示（如果有）
+  setTimeout(() => showNextPrompt(), 300)
+}
+
+const handlePromptSkip = async () => {
+  if (!currentPrompt.value) return
+  
+  const groupId = currentPrompt.value.prompt_group_id
+  const clientRequestId = generateId()
+  
+  try {
+    await promptAPI.skip(groupId, clientRequestId, 0)
+  } catch (err) {
+    console.error('跳过提示失败:', err)
+  }
+  
+  showPromptDialog.value = false
+  currentPrompt.value = null
+  
+  // 展示下一个提示（如果有）
+  setTimeout(() => showNextPrompt(), 300)
 }
 
 onMounted(async () => {

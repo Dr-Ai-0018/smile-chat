@@ -17,7 +17,7 @@ from dotenv import load_dotenv
 # 必须在导入 routers/AIService 之前加载 .env，否则配置会在 import 时读取不到
 load_dotenv()
 
-from routers import auth, chat, user, memory, admin, image, config
+from routers import auth, chat, user, memory, admin, image, config, prompts
 from utils.jwt import verify_token
 from utils.password import hash_password
 from storage import JsonStorage
@@ -104,6 +104,7 @@ app.include_router(memory.router, prefix="/api/memory", tags=["记忆"])
 app.include_router(admin.router, prefix="/api/admin", tags=["管理"])
 app.include_router(image.router, prefix="/api/image", tags=["图片"])
 app.include_router(config.router, prefix="/api/config", tags=["配置"])
+app.include_router(prompts.router, prefix="/api", tags=["提示系统"])
 
 # 静态文件服务 - 头像和图片上传
 UPLOADS_DIR = Path(__file__).parent / "uploads"
