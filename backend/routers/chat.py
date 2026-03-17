@@ -5,6 +5,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from pathlib import Path
 import json
 import asyncio
+import os
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 from pydantic import BaseModel
@@ -16,6 +17,10 @@ from storage import JsonStorage
 
 # 中国时区 UTC+8
 CHINA_TZ = timezone(timedelta(hours=8))
+
+# 实验参数（从环境变量读取，带默认值）
+MIN_USER_MESSAGE_LENGTH = int(os.getenv("MIN_USER_MESSAGE_LENGTH", "10"))
+ROUND_RESET_INTERVAL_MINUTES = int(os.getenv("ROUND_RESET_INTERVAL_MINUTES", "60"))
 
 def get_china_now() -> datetime:
     """获取中国时间"""
@@ -149,7 +154,11 @@ async def send_message_with_context(
     
     # 同时保存到Memory文件系统
     save_message_to_history(user_id, "user", last_user_msg.content or "", last_user_msg.image)
-    
+
+    # 收到用户消息时：记录时间、判断是否超时重置（不累加轮次，等AI成功回复后再+1）
+    user_msg_time = get_china_now()
+    _record_user_msg_time(user_id, last_user_msg.content or "", user_msg_time)
+
     try:
         # 调用AI服务 (使用v2协议化接口)
         response = await ai_service.chat_with_context_v2(
@@ -196,7 +205,13 @@ async def send_message_with_context(
         
         # 自动记忆压缩逻辑
         await check_and_compress_memory(user_id)
-        
+
+        # AI完整回复成功后才累加轮次，并记录本次会话最后活跃时间
+        _increment_round_count(user_id, last_user_msg.content or "", user_msg_time)
+        storage.update_user_experiment_state(user_id, {
+            "last_session_end_time": get_china_now().isoformat(),
+        })
+
         return ChatResponse(
             role="assistant",
             content=reply_content,
@@ -297,3 +312,48 @@ async def send_message(
         raise HTTPException(status_code=400, detail="缺少content")
     request = SendMessageRequest(messages=[MessageItem(role="user", content=content_value)])
     return await send_message_with_context(request, user_id)
+
+
+def _record_user_msg_time(user_id: int, user_msg_content: str, msg_time: datetime):
+    """收到用户消息时调用：判断间隔是否超时，超时则重置轮次；不累加轮次。"""
+    state = storage.get_user_experiment_state(user_id)
+    last_time_str = state.get("last_user_message_time")
+
+    if last_time_str:
+        try:
+            last_time = datetime.fromisoformat(last_time_str)
+            if last_time.tzinfo is None:
+                last_time = last_time.replace(tzinfo=CHINA_TZ)
+            gap_minutes = (msg_time - last_time).total_seconds() / 60
+            if gap_minutes > ROUND_RESET_INTERVAL_MINUTES:
+                # 超时：清零，记录新会话开始时间，但本轮轮次等AI回复后再+1
+                storage.update_user_experiment_state(user_id, {
+                    "current_round_count": 0,
+                    "session_start_time": msg_time.isoformat(),
+                    "last_user_message_time": msg_time.isoformat(),
+                })
+                return
+        except Exception:
+            pass
+
+    # 所有用户消息都会刷新会话间隔判断时间；是否计轮仍由 AI 成功回复后 +
+    # 1 且消息长度达标来决定。
+    updates = {"last_user_message_time": msg_time.isoformat()}
+    if not state.get("session_start_time"):
+        updates["session_start_time"] = msg_time.isoformat()
+    storage.update_user_experiment_state(user_id, updates)
+
+
+def _increment_round_count(user_id: int, user_msg_content: str, msg_time: datetime):
+    """AI完整回复成功后调用：轮次 +1。"""
+    if len(user_msg_content.strip()) < MIN_USER_MESSAGE_LENGTH:
+        return
+    state = storage.get_user_experiment_state(user_id)
+    new_count = state.get("current_round_count", 0) + 1
+    storage.update_user_experiment_state(user_id, {"current_round_count": new_count})
+
+
+# 保留旧名称供外部兼容（实际已不使用）
+def update_round_count(user_id: int, user_msg_content: str, msg_time: datetime):
+    _record_user_msg_time(user_id, user_msg_content, msg_time)
+    _increment_round_count(user_id, user_msg_content, msg_time)

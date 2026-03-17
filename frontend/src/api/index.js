@@ -167,6 +167,26 @@ export const promptAPI = {
   },
   
   // 管理端：获取回答列表
-  getAnswers: (groupId, limit = 100) => 
+  getAnswers: (groupId, limit = 100) =>
     client.get(`/admin/prompt-groups/${groupId}/answers?limit=${limit}`)
+}
+
+export const noticeAPI = {
+  getPending: () => client.get('/notices/pending'),
+  getInbox: () => client.get('/notices/inbox'),
+  markShown: (id) => client.post(`/notices/${id}/shown`),
+  markRead: (id) => client.post(`/notices/${id}/read`),
+}
+
+export const checkinAPI = {
+  getStatus: () => client.get('/checkin/status'),
+  submit: (answers) => client.post('/checkin/submit', { answers }),
+  checkWeekendSurvey: () => client.get('/checkin/weekend_survey_check'),
+  getQuestions: () => client.get('/checkin/questions'),
+}
+
+export const settingsAPI = {
+  getPublic: () => client.get('/public/settings'),
+  getAdmin: () => client.get('/admin/settings'),
+  updateAdmin: (data) => client.put('/admin/settings', data),
 }

@@ -384,3 +384,26 @@ async def set_invite_code_setting(
         "invite_code_enabled": settings.get("invite_code_enabled", True),
         "message": "邀请码已" + ("启用" if req.enabled else "关闭")
     }
+
+# ==================== 通用设置 GET/PUT ====================
+@router.get("/settings")
+async def get_all_settings(admin_id: int = Depends(is_admin)):
+    """获取所有系统设置"""
+    return storage.get_settings()
+
+@router.put("/settings")
+async def update_all_settings(
+    updates: dict,
+    admin_id: int = Depends(is_admin),
+):
+    """更新系统设置（部分更新）"""
+    # 校验打卡题目数量
+    if "checkin_questions" in updates:
+        qs = updates["checkin_questions"]
+        if not isinstance(qs, list) or len(qs) == 0:
+            raise HTTPException(status_code=400, detail="打卡题目至少需要1题")
+        updates["checkin_questions"] = [q for q in qs if isinstance(q, str) and q.strip()]
+        if len(updates["checkin_questions"]) == 0:
+            raise HTTPException(status_code=400, detail="打卡题目不能全为空")
+    settings = storage.update_settings(updates)
+    return settings

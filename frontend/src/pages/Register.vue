@@ -117,7 +117,12 @@ const handleRegister = async () => {
     // 跳转到实验开始页
     router.push('/experiment/start')
   } catch (err) {
-    error.value = err.response?.data?.detail || '注册失败，请检查信息'
+    const detail = err.response?.data?.detail || ''
+    if (detail === '用户名已存在') {
+      error.value = '用户名已被使用，请换一个'
+    } else {
+      error.value = detail || '注册失败，请检查信息'
+    }
   } finally {
     loading.value = false
   }
