@@ -26,6 +26,7 @@ class SessionPreset:
     conversation_duration_min: int  # 本轮对话持续分钟数
     local_time_bucket: str  # morning/afternoon/evening/late_night
     turn_count: int  # 本会话轮次
+    time_since_last_chat: int = 0  # 距上次完整会话结束的分钟数
     
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -60,72 +61,109 @@ class SessionStateService:
     def compute_preset(self, user_id: int) -> SessionPreset:
         """
         计算本轮的动态状态参数
-        
+
         Returns:
             SessionPreset 对象，用于注入到LLM context
         """
         session = self.get_or_create_session(user_id)
-        
-        # 1. 计算 recent_self_disclosure_rate
+
+        # 1. 计算 recent_self_disclosure_rate（从聊天历史读取）
         disclosure_rate = self._compute_disclosure_rate(user_id)
-        
-        # 2. 获取 last_relationship_stage
-        last_stage = session.get("last_relationship_stage", "A")
-        
-        # 3. 计算 conversation_duration_min - 使用中国时间
-        start_time_str = session.get("start_time")
-        if start_time_str:
+
+        # 2. 获取 last_relationship_stage（从聊天历史最近一条 assistant 消息读取）
+        last_stage = self._get_last_relationship_stage(user_id) or session.get("last_relationship_stage", "A")
+
+        # 3~5. 优先从持久化实验状态读取
+        try:
+            exp_state = self.storage.get_user_experiment_state(user_id)
+        except Exception:
+            exp_state = {}
+
+        # conversation_duration_min：当前会话开始到现在
+        session_start_str = exp_state.get("session_start_time") or session.get("start_time")
+        if session_start_str:
             try:
-                start_time = datetime.fromisoformat(start_time_str)
-                # 确保时区一致
+                start_time = datetime.fromisoformat(session_start_str)
                 if start_time.tzinfo is None:
                     start_time = start_time.replace(tzinfo=CHINA_TZ)
                 duration = (get_china_now() - start_time).total_seconds() / 60
-                duration_min = int(duration // 5) * 5  # 精度5分钟
+                duration_min = int(duration // 5) * 5
             except Exception:
                 duration_min = 0
         else:
             duration_min = 0
-        
-        # 4. 计算 local_time_bucket
+
+        # local_time_bucket
         time_bucket = self._get_time_bucket()
-        
-        # 5. 获取 turn_count
-        turn_count = session.get("turn_count", 0)
-        
+
+        # turn_count：从持久化状态读取
+        turn_count = exp_state.get("current_round_count", session.get("turn_count", 0))
+
+        # time_since_last_chat：距上次完整聊天结束时间
+        last_end_str = exp_state.get("last_session_end_time")
+        if last_end_str:
+            try:
+                last_end_time = datetime.fromisoformat(last_end_str)
+                if last_end_time.tzinfo is None:
+                    last_end_time = last_end_time.replace(tzinfo=CHINA_TZ)
+                time_since = int((get_china_now() - last_end_time).total_seconds() / 60)
+            except Exception:
+                time_since = 0
+        else:
+            time_since = 0
+
         return SessionPreset(
             recent_self_disclosure_rate=disclosure_rate,
             last_relationship_stage=last_stage,
             conversation_duration_min=duration_min,
             local_time_bucket=time_bucket,
             turn_count=turn_count,
+            time_since_last_chat=time_since,
         )
     
-    def _compute_disclosure_rate(self, user_id: int) -> float:
-        """计算最近5条assistant消息的自我表露率"""
-        # 从存储获取最近的聊天历史
+    def _get_last_relationship_stage(self, user_id: int) -> Optional[str]:
+        """从最近一条 assistant 消息的 meta 读取关系阶段"""
         history = self.storage.get_chat_history(user_id=user_id, limit=20)
-        
-        # 筛选assistant消息
-        assistant_msgs = [m for m in history if m.get("role") == "assistant"]
-        recent_5 = assistant_msgs[-5:] if len(assistant_msgs) >= 5 else assistant_msgs
-        
+        for m in reversed(history):
+            if m.get("role") == "assistant":
+                stage = m.get("meta", {}).get("relationship_stage") or m.get("meta", {}).get("relationship_stage_judge")
+                if stage in ("A", "B", "C"):
+                    return stage
+        return None
+
+    def _compute_disclosure_rate(self, user_id: int) -> float:
+        """计算最近5轮对话的自我表露率（每轮取最后一条assistant消息）"""
+        history = self.storage.get_chat_history(user_id=user_id, limit=40)
+
+        # 按轮次分组：每遇到 user 消息开启新轮，收集该轮所有 assistant 消息
+        rounds: List[List[dict]] = []
+        current_round_assistants: List[dict] = []
+        for m in history:
+            if m.get("role") == "user":
+                if current_round_assistants:
+                    rounds.append(current_round_assistants)
+                current_round_assistants = []
+            elif m.get("role") == "assistant":
+                current_round_assistants.append(m)
+        if current_round_assistants:
+            rounds.append(current_round_assistants)
+
+        # 取最近5轮，每轮用最后一条 assistant 消息
+        recent_5 = [r[-1] for r in rounds[-5:]]
         if not recent_5:
             return 0.0
-        
-        # 统计触发表露的条数（兼容两种字段名）
+
         disclosure_count = sum(
-            1 for m in recent_5 
+            1 for m in recent_5
             if m.get("meta", {}).get("did_self_disclosure", False)
             or m.get("meta", {}).get("self_disclosure_triggered", False)
         )
-        
         return disclosure_count / len(recent_5)
     
     def _get_time_bucket(self) -> str:
         """获取当前时间段 - 使用中国时间"""
         hour = get_china_now().hour
-        if 5 <= hour < 12:
+        if 6 <= hour < 12:
             return "morning"
         elif 12 <= hour < 18:
             return "afternoon"

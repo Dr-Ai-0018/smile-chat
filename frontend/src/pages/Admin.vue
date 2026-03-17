@@ -616,12 +616,46 @@
         </div>
       </div>
     </Transition>
+
+    <!-- 打卡设置 -->
+    <section v-if="activeTab === 'checkin'" class="panel checkin-panel">
+      <div class="panel-header">
+        <h2>打卡设置</h2>
+      </div>
+      <div class="config-sections">
+        <div class="config-section">
+          <h3>周末问卷链接</h3>
+          <p class="config-desc">每周打卡达标后，周末上线时自动弹出此链接</p>
+          <div class="config-form">
+            <div class="config-row">
+              <label>问卷链接</label>
+              <input v-model="checkinSettings.weekly_survey_url" type="url" placeholder="https://..." style="flex:1" />
+            </div>
+          </div>
+        </div>
+
+        <div class="config-section">
+          <h3>打卡题目</h3>
+          <p class="config-desc">用户打卡时显示的滑块题目（1~10分）</p>
+          <div v-for="(q, i) in checkinSettings.checkin_questions" :key="i" class="config-row">
+            <label>题目 {{ i + 1 }}</label>
+            <input v-model="checkinSettings.checkin_questions[i]" type="text" style="flex:1" />
+            <button class="icon-action-btn danger" @click="removeCheckinQuestion(i)" title="删除">×</button>
+          </div>
+          <button class="create-btn" style="margin-top:8px" @click="addCheckinQuestion">+ 添加题目</button>
+        </div>
+
+        <button class="save-btn" @click="saveCheckinSettings" :disabled="loading">
+          {{ loading ? '保存中...' : '保存设置' }}
+        </button>
+      </div>
+    </section>
   </div>
 </template>
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
-import { adminAPI, configAPI, promptAPI } from '../api'
+import { adminAPI, configAPI, promptAPI, settingsAPI } from '../api'
 import { toast, confirm } from '../utils/toast'
 
 // 标签页配置
@@ -631,7 +665,8 @@ const tabs = [
   { id: 'memory', label: '记忆管理', icon: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/></svg>' },
   { id: 'prompts', label: '提示系统', icon: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/><path d="M8 9h8M8 13h6"/></svg>' },
   { id: 'invites', label: '邀请码', icon: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M7 8h10M7 12h10M7 16h6"/></svg>' },
-  { id: 'config', label: '系统配置', icon: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>' }
+  { id: 'config', label: '系统配置', icon: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>' },
+  { id: 'checkin', label: '打卡设置', icon: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>' }
 ]
 
 const activeTab = ref('dashboard')
@@ -1134,6 +1169,60 @@ const formatCondition = (condition) => {
   return map[condition] || '无表露'
 }
 
+// ==================== 打卡设置 ====================
+const DEFAULT_CHECKIN_QUESTIONS = [
+  '你现在的孤独感如何？',
+  '你现在的情绪状态如何？',
+  '你现在的压力程度如何？',
+  '你现在的满足感如何？',
+  '你现在的社交需求如何？',
+]
+
+const checkinSettings = ref({
+  weekly_survey_url: '',
+  checkin_questions: [...DEFAULT_CHECKIN_QUESTIONS],
+})
+
+const loadCheckinSettings = async () => {
+  try {
+    const res = await settingsAPI.getAdmin()
+    checkinSettings.value.weekly_survey_url = res.weekly_survey_url || ''
+    checkinSettings.value.checkin_questions = res.checkin_questions?.length
+      ? res.checkin_questions
+      : [...DEFAULT_CHECKIN_QUESTIONS]
+  } catch (e) {
+    console.error('加载打卡设置失败', e)
+  }
+}
+
+const saveCheckinSettings = async () => {
+  const validQuestions = checkinSettings.value.checkin_questions.filter(q => q.trim())
+  if (validQuestions.length === 0) {
+    toast.error('至少需要1道打卡题目')
+    return
+  }
+  loading.value = true
+  try {
+    await settingsAPI.updateAdmin({
+      weekly_survey_url: checkinSettings.value.weekly_survey_url,
+      checkin_questions: validQuestions,
+    })
+    toast.success('打卡设置已保存')
+  } catch (e) {
+    toast.error('保存失败')
+  } finally {
+    loading.value = false
+  }
+}
+
+const addCheckinQuestion = () => {
+  checkinSettings.value.checkin_questions.push('')
+}
+
+const removeCheckinQuestion = (i) => {
+  checkinSettings.value.checkin_questions.splice(i, 1)
+}
+
 onMounted(() => {
   loadStats()
   loadUsers()
@@ -1143,6 +1232,7 @@ onMounted(() => {
   loadContextConfig()
   loadPromptGroups()
   loadPromptStats()
+  loadCheckinSettings()
 })
 </script>
 

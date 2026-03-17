@@ -11,9 +11,23 @@
           <span v-if="isTyping" class="typing-indicator">正在输入中...</span>
         </h1>
       </div>
-      <button class="settings-btn" @click="$router.push('/settings')">
-        <span>⚙</span>
-      </button>
+      <div class="header-right">
+        <button
+          class="checkin-btn"
+          :class="{ active: canCheckin }"
+          @click="openCheckin"
+          title="打卡"
+        >✓</button>
+        <NoticeInbox
+          :notices="inboxNotices"
+          :unreadCount="unreadNoticeCount"
+          @open="loadInbox"
+          @read="handleNoticeRead"
+        />
+        <button class="settings-btn" @click="$router.push('/settings')">
+          <span>⚙</span>
+        </button>
+      </div>
     </header>
 
     <!-- 侧边栏菜单 -->
@@ -167,13 +181,28 @@
       @skip="handlePromptSkip"
     />
 
+    <!-- 打卡弹窗 -->
+    <CheckinDialog
+      v-if="showCheckinDialog"
+      :questions="checkinQuestions"
+      @close="showCheckinDialog = false"
+      @success="handleCheckinSuccess"
+    />
+
+    <!-- 通知弹窗 -->
+    <NoticePopup
+      :visible="!!pendingNotice"
+      :notice="pendingNotice"
+      @read="handleNoticeDismiss"
+    />
+
   </div>
 </template>
 
 <script setup>
 import { ref, onMounted, nextTick, computed, onUnmounted, onActivated } from 'vue'
 import { useRouter } from 'vue-router'
-import { chatAPI, userAPI, promptAPI } from '../api'
+import { chatAPI, userAPI, promptAPI, checkinAPI, noticeAPI } from '../api'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import { toast, confirm } from '../utils/toast'
@@ -181,6 +210,9 @@ import AiAvatar from '../components/AiAvatar.vue'
 import UserAvatar from '../components/UserAvatar.vue'
 import MessageDecoration from '../components/MessageDecoration.vue'
 import PromptDialog from '../components/PromptDialog.vue'
+import CheckinDialog from '../components/CheckinDialog.vue'
+import NoticePopup from '../components/NoticePopup.vue'
+import NoticeInbox from '../components/NoticeInbox.vue'
 import { resolveStaticUrl } from '../utils/url'
 
 defineOptions({ name: 'Chat' })
@@ -211,6 +243,19 @@ const userAvatarUrl = ref('')
 const showPromptDialog = ref(false)
 const currentPrompt = ref(null)
 const promptQueue = ref([])
+
+// 打卡系统状态
+const canCheckin = ref(false)
+const checkinQuestions = ref([])
+const showCheckinDialog = ref(false)
+
+// 通知系统状态
+const pendingNotice = ref(null)
+const pendingNoticeQueue = ref([])
+const inboxNotices = ref([])
+const unreadNoticeCount = computed(() =>
+  inboxNotices.value.filter(n => !n.read_at).length
+)
 
 // 计算是否可以发送（loading时也可以发，用于中断当前请求）
 const canSend = computed(() => {
@@ -357,8 +402,9 @@ const requestAIResponse = async () => {
     
     isStreaming.value = false
     
-    // AI回复完成后，评估是否需要展示提示
+    // AI回复完成后，评估是否需要展示提示，并刷新打卡状态
     setTimeout(() => evaluatePrompts(), 500)
+    setTimeout(() => refreshCheckinStatus(), 600)
     
     // 如果期间有新的用户消息，按顺序在当前回复完成后再请求AI
     if (hasPendingAfterStream) {
@@ -661,12 +707,104 @@ const handlePromptSkip = async () => {
   setTimeout(() => showNextPrompt(), 300)
 }
 
+// ==================== 打卡系统逻辑 ====================
+const refreshCheckinStatus = async () => {
+  try {
+    const res = await checkinAPI.getStatus()
+    canCheckin.value = res.can_checkin
+    checkinQuestions.value = res.questions || []
+  } catch (e) {
+    console.error('获取打卡状态失败', e)
+  }
+}
+
+const openCheckin = () => {
+  if (!canCheckin.value) {
+    toast.info('还不能打卡，继续聊天吧～')
+    return
+  }
+  showCheckinDialog.value = true
+}
+
+const handleCheckinSuccess = async () => {
+  showCheckinDialog.value = false
+  toast.success('打卡成功！')
+  await refreshCheckinStatus()
+}
+
+// ==================== 通知系统逻辑 ====================
+const loadPendingNotices = async () => {
+  try {
+    const res = await noticeAPI.getPending()
+    const notices = res.notices || []
+    if (notices.length > 0) {
+      pendingNoticeQueue.value = notices
+      showNextNotice()
+    }
+  } catch (e) {
+    console.error('获取通知失败', e)
+  }
+}
+
+const loadInbox = async () => {
+  try {
+    const res = await noticeAPI.getInbox()
+    inboxNotices.value = res.notices || []
+  } catch (e) {
+    console.error('获取收件箱失败', e)
+  }
+}
+
+const showNextNotice = () => {
+  if (pendingNoticeQueue.value.length === 0) {
+    pendingNotice.value = null
+    return
+  }
+  pendingNotice.value = pendingNoticeQueue.value.shift()
+  noticeAPI.markShown(pendingNotice.value.id).catch(() => {})
+}
+
+const handleNoticeDismiss = async (noticeId) => {
+  await noticeAPI.markRead(noticeId).catch(() => {})
+  pendingNotice.value = null
+  setTimeout(() => showNextNotice(), 300)
+}
+
+const handleNoticeRead = async (noticeId) => {
+  await noticeAPI.markRead(noticeId).catch(() => {})
+  await loadInbox()
+}
+
+const checkWeekendSurvey = async () => {
+  try {
+    const res = await checkinAPI.checkWeekendSurvey()
+    if (res.should_popup && res.notice_id) {
+      const surveyNotice = {
+        id: res.notice_id,
+        title: '本周问卷提醒',
+        content: res.notice_content || '请填写本周问卷',
+        created_at: new Date().toISOString(),
+      }
+      pendingNoticeQueue.value.unshift(surveyNotice)
+      if (!pendingNotice.value) showNextNotice()
+      // 刷新收件箱，让问卷通知出现在邮件图标里
+      loadInbox()
+    }
+  } catch (e) {
+    console.error('周末问卷检查失败', e)
+  }
+}
+
 onMounted(async () => {
   // 并行加载历史和同步头像
   await Promise.all([loadHistory(), syncUserAvatar()])
   if (inputElement.value) {
     inputElement.value.focus()
   }
+  // 初始化打卡状态和通知
+  await Promise.all([refreshCheckinStatus(), loadPendingNotices(), loadInbox()])
+  // 周末问卷检查
+  checkWeekendSurvey()
 })
 
 onActivated(() => {
@@ -742,6 +880,31 @@ onUnmounted(() => {
 .menu-btn:hover, .settings-btn:hover {
   background: rgba(0, 0, 0, 0.05);
   border-radius: 8px;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.checkin-btn {
+  background: transparent;
+  border: 2px solid #ccc;
+  border-radius: 8px;
+  font-size: 1rem;
+  font-weight: 600;
+  padding: 4px 10px;
+  cursor: pointer;
+  color: #bbb;
+  transition: all 0.25s ease;
+  line-height: 1.4;
+}
+
+.checkin-btn.active {
+  border-color: #4a9edd;
+  color: #4a9edd;
+  background: rgba(74, 158, 221, 0.08);
 }
 
 /* 侧边栏 */

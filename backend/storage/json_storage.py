@@ -683,3 +683,288 @@ class JsonStorage:
         items = data.get("items", [])
         user_msg_count = sum(1 for m in items if m.get("role") == "user")
         return max(0, user_msg_count - last_reset_msg_count)
+
+    # ==================== Notice System ====================
+
+    def _notices_file(self) -> Path:
+        return self.base_dir / "notices.json"
+
+    def _user_notice_states_file(self) -> Path:
+        return self.base_dir / "user_notice_states.json"
+
+    def _read_notices_unlocked(self) -> Dict[str, Any]:
+        data = self._read_json_unlocked(self._notices_file(), {"next_id": 1, "items": []})
+        if not isinstance(data, dict):
+            data = {"next_id": 1, "items": []}
+        if not isinstance(data.get("items"), list):
+            data["items"] = []
+        return data
+
+    def _read_user_notice_states_unlocked(self) -> Dict[str, Any]:
+        data = self._read_json_unlocked(self._user_notice_states_file(), {"items": []})
+        if not isinstance(data, dict):
+            data = {"items": []}
+        if not isinstance(data.get("items"), list):
+            data["items"] = []
+        return data
+
+    def get_notices(self, enabled_only: bool = False) -> List[Dict[str, Any]]:
+        data = self.read_json(self._notices_file(), {"next_id": 1, "items": []})
+        items = data.get("items", [])
+        if enabled_only:
+            return [n for n in items if n.get("enabled", True)]
+        return list(items)
+
+    def get_notice_by_id(self, notice_id: int) -> Optional[Dict[str, Any]]:
+        for n in self.get_notices():
+            if n.get("id") == notice_id:
+                return n
+        return None
+
+    def create_notice(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        path = self._notices_file()
+        with self._lock_paths([path]):
+            notices = self._read_notices_unlocked()
+            notice_id = notices.get("next_id", 1)
+            now = get_china_now().isoformat()
+            notice = {
+                "id": notice_id,
+                "title": data.get("title", ""),
+                "content": data.get("content", ""),
+                "enabled": data.get("enabled", True),
+                "trigger_msg_count": data.get("trigger_msg_count", 0),
+                "priority": data.get("priority", 0),
+                "source": data.get("source", "admin"),
+                "created_at": now,
+                "updated_at": now,
+            }
+            # 可选：限定特定用户（user_id 存在时为用户专属通知）
+            if "user_id" in data:
+                notice["user_id"] = data["user_id"]
+            notices["items"].append(notice)
+            notices["next_id"] = notice_id + 1
+            self._write_json_atomic_unlocked(path, notices)
+            return notice
+
+    def update_notice(self, notice_id: int, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        path = self._notices_file()
+        with self._lock_paths([path]):
+            data = self._read_notices_unlocked()
+            for n in data["items"]:
+                if n.get("id") == notice_id:
+                    for k, v in updates.items():
+                        if k not in ("id", "created_at"):
+                            n[k] = v
+                    n["updated_at"] = get_china_now().isoformat()
+                    self._write_json_atomic_unlocked(path, data)
+                    return n
+        return None
+
+    def delete_notice(self, notice_id: int) -> bool:
+        path = self._notices_file()
+        states_path = self._user_notice_states_file()
+        with self._lock_paths([path, states_path]):
+            data = self._read_notices_unlocked()
+            new_items = [n for n in data["items"] if n.get("id") != notice_id]
+            if len(new_items) == len(data["items"]):
+                return False
+            data["items"] = new_items
+            self._write_json_atomic_unlocked(path, data)
+            # 清理关联的用户状态
+            states = self._read_user_notice_states_unlocked()
+            states["items"] = [s for s in states["items"] if s.get("notice_id") != notice_id]
+            self._write_json_atomic_unlocked(states_path, states)
+            return True
+
+    def get_notice_read_count(self, notice_id: int) -> int:
+        data = self.read_json(self._user_notice_states_file(), {"items": []})
+        return sum(
+            1 for s in data.get("items", [])
+            if s.get("notice_id") == notice_id and s.get("read_at")
+        )
+
+    def get_user_notice_state(self, user_id: int, notice_id: int) -> Optional[Dict[str, Any]]:
+        data = self.read_json(self._user_notice_states_file(), {"items": []})
+        for s in data.get("items", []):
+            if s.get("user_id") == user_id and s.get("notice_id") == notice_id:
+                return s
+        return None
+
+    def upsert_user_notice_state(self, user_id: int, notice_id: int, updates: Dict[str, Any]) -> Dict[str, Any]:
+        path = self._user_notice_states_file()
+        with self._lock_paths([path]):
+            data = self._read_user_notice_states_unlocked()
+            state = None
+            for s in data["items"]:
+                if s.get("user_id") == user_id and s.get("notice_id") == notice_id:
+                    state = s
+                    break
+            if state is None:
+                state = {"user_id": user_id, "notice_id": notice_id, "shown_at": None, "read_at": None}
+                data["items"].append(state)
+            for k, v in updates.items():
+                state[k] = v
+            self._write_json_atomic_unlocked(path, data)
+            return state
+
+    def get_pending_notices_for_user(self, user_id: int) -> List[Dict[str, Any]]:
+        """返回已触发但未读的通知（弹窗用）"""
+        notices = self.get_notices(enabled_only=True)
+        # 只取全局通知 + 该用户专属通知
+        notices = [n for n in notices if "user_id" not in n or n["user_id"] == user_id]
+        states_data = self.read_json(self._user_notice_states_file(), {"items": []})
+        states_map = {
+            s["notice_id"]: s
+            for s in states_data.get("items", [])
+            if s.get("user_id") == user_id
+        }
+        result = []
+        for n in sorted(notices, key=lambda x: -x.get("priority", 0)):
+            state = states_map.get(n["id"])
+            # 弹窗只自动展示一次；展示过后改为仅在收件箱回看
+            if state and (state.get("read_at") or state.get("shown_at")):
+                continue
+            result.append({**n, "shown_at": state.get("shown_at") if state else None})
+        return result
+
+    def get_inbox_notices_for_user(self, user_id: int) -> List[Dict[str, Any]]:
+        """返回所有已触发通知（含已读状态，收件箱用）"""
+        notices = self.get_notices(enabled_only=True)
+        # 只取全局通知 + 该用户专属通知
+        notices = [n for n in notices if "user_id" not in n or n["user_id"] == user_id]
+        states_data = self.read_json(self._user_notice_states_file(), {"items": []})
+        states_map = {
+            s["notice_id"]: s
+            for s in states_data.get("items", [])
+            if s.get("user_id") == user_id
+        }
+        result = []
+        for n in sorted(notices, key=lambda x: -x.get("priority", 0)):
+            state = states_map.get(n["id"])
+            result.append({
+                **n,
+                "shown_at": state.get("shown_at") if state else None,
+                "read_at": state.get("read_at") if state else None,
+            })
+        return result
+
+    # ==================== Experiment State ====================
+
+    def _experiment_states_file(self) -> Path:
+        return self.base_dir / "user_experiment_states.json"
+
+    def _read_experiment_states_unlocked(self) -> Dict[str, Any]:
+        data = self._read_json_unlocked(self._experiment_states_file(), {"items": []})
+        if not isinstance(data, dict):
+            data = {"items": []}
+        if not isinstance(data.get("items"), list):
+            data["items"] = []
+        return data
+
+    def _get_current_week_key(self) -> str:
+        now = get_china_now()
+        return now.strftime("%Y-W%W")
+
+    def get_user_experiment_state(self, user_id: int) -> Dict[str, Any]:
+        """读取用户实验状态，自动初始化并重置过期的周计数"""
+        path = self._experiment_states_file()
+        with self._lock_paths([path]):
+            data = self._read_experiment_states_unlocked()
+            state = None
+            for s in data["items"]:
+                if s.get("user_id") == user_id:
+                    state = s
+                    break
+            current_week = self._get_current_week_key()
+            if state is None:
+                state = {
+                    "user_id": user_id,
+                    "current_round_count": 0,
+                    "last_user_message_time": None,
+                    "session_start_time": None,
+                    "last_checkin_at": None,
+                    "weekly_checkin_count": 0,
+                    "weekly_survey_popup_shown": False,
+                    "current_week_key": current_week,
+                }
+                data["items"].append(state)
+                self._write_json_atomic_unlocked(path, data)
+            elif state.get("current_week_key") != current_week:
+                # 新的一周，重置周计数
+                state["weekly_checkin_count"] = 0
+                state["weekly_survey_popup_shown"] = False
+                state["current_week_key"] = current_week
+                self._write_json_atomic_unlocked(path, data)
+            return dict(state)
+
+    def update_user_experiment_state(self, user_id: int, updates: Dict[str, Any]) -> Dict[str, Any]:
+        path = self._experiment_states_file()
+        with self._lock_paths([path]):
+            data = self._read_experiment_states_unlocked()
+            state = None
+            for s in data["items"]:
+                if s.get("user_id") == user_id:
+                    state = s
+                    break
+            if state is None:
+                current_week = self._get_current_week_key()
+                state = {
+                    "user_id": user_id,
+                    "current_round_count": 0,
+                    "last_user_message_time": None,
+                    "session_start_time": None,
+                    "last_checkin_at": None,
+                    "weekly_checkin_count": 0,
+                    "weekly_survey_popup_shown": False,
+                    "current_week_key": current_week,
+                }
+                data["items"].append(state)
+            for k, v in updates.items():
+                state[k] = v
+            self._write_json_atomic_unlocked(path, data)
+            return dict(state)
+
+    # ==================== Checkin Records ====================
+
+    def _checkin_records_file(self) -> Path:
+        return self.base_dir / "checkin_records.json"
+
+    def _read_checkin_records_unlocked(self) -> Dict[str, Any]:
+        data = self._read_json_unlocked(self._checkin_records_file(), {"next_id": 1, "items": []})
+        if not isinstance(data, dict):
+            data = {"next_id": 1, "items": []}
+        if not isinstance(data.get("items"), list):
+            data["items"] = []
+        return data
+
+    def create_checkin_record(
+        self,
+        user_id: int,
+        answers: Dict[str, Any],
+        round_count: int,
+        week_key: str,
+    ) -> Dict[str, Any]:
+        path = self._checkin_records_file()
+        with self._lock_paths([path]):
+            data = self._read_checkin_records_unlocked()
+            record_id = data.get("next_id", 1)
+            record = {
+                "id": record_id,
+                "user_id": user_id,
+                "answers": answers,
+                "round_count_at_checkin": round_count,
+                "created_at": get_china_now().isoformat(),
+                "week_key": week_key,
+            }
+            data["items"].append(record)
+            data["next_id"] = record_id + 1
+            self._write_json_atomic_unlocked(path, data)
+            return record
+
+    def get_checkin_records(self, user_id: int, week_key: Optional[str] = None) -> List[Dict[str, Any]]:
+        data = self.read_json(self._checkin_records_file(), {"next_id": 1, "items": []})
+        items = data.get("items", [])
+        result = [r for r in items if r.get("user_id") == user_id]
+        if week_key:
+            result = [r for r in result if r.get("week_key") == week_key]
+        return result

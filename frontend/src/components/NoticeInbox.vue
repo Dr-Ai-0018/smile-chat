@@ -36,7 +36,7 @@
             :key="notice.id"
             class="notice-item"
             :class="{ unread: !notice.read_at }"
-            @click="toggleExpand(notice.id)"
+            @click="toggleExpand(notice)"
           >
             <div class="item-header">
               <div class="item-left">
@@ -48,7 +48,7 @@
 
             <Transition name="expand">
               <div v-if="expandedId === notice.id" class="item-content">
-                <p>{{ notice.content }}</p>
+                <p v-html="renderContent(notice.content)"></p>
                 <div class="item-meta">
                   <span v-if="notice.read_at" class="read-label">
                     <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
@@ -78,17 +78,38 @@ const props = defineProps({
   unreadCount: { type: Number, default: 0 },
 })
 
+const emit = defineEmits(['open', 'read'])
+
 const panelOpen = ref(false)
 const expandedId = ref(null)
 const inboxRef = ref(null)
 
 const togglePanel = () => {
   panelOpen.value = !panelOpen.value
-  if (panelOpen.value) expandedId.value = null
+  if (panelOpen.value) {
+    expandedId.value = null
+    emit('open')
+  }
 }
 
-const toggleExpand = (id) => {
-  expandedId.value = expandedId.value === id ? null : id
+const toggleExpand = (notice) => {
+  const id = notice.id
+  if (expandedId.value === id) {
+    expandedId.value = null
+  } else {
+    expandedId.value = id
+    // 展开时标记已读
+    if (!notice.read_at) {
+      emit('read', id)
+    }
+  }
+}
+
+const renderContent = (content) => {
+  if (!content) return ''
+  return content
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
+    .replace(/\n/g, '<br>')
 }
 
 const formatTimeShort = (iso) => {
@@ -326,6 +347,11 @@ const formatTimeShort = (iso) => {
   line-height: 1.65;
   margin: 0 0 0.5rem 0;
   white-space: pre-wrap;
+}
+
+.item-content p :deep(a) {
+  color: #4a9edd;
+  text-decoration: underline;
 }
 
 .item-meta {

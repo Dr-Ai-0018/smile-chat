@@ -17,7 +17,7 @@
           <!-- 内容 -->
           <div class="notice-body">
             <h3 class="notice-title">{{ notice.title }}</h3>
-            <p class="notice-content">{{ notice.content }}</p>
+            <p class="notice-content" v-html="renderedContent"></p>
             <div class="notice-time">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <circle cx="12" cy="12" r="10"/>
@@ -47,7 +47,7 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 
 const props = defineProps({
   visible: { type: Boolean, default: false },
@@ -57,6 +57,14 @@ const props = defineProps({
 const emit = defineEmits(['read'])
 
 const cardRef = ref(null)
+
+const renderedContent = computed(() => {
+  if (!props.notice?.content) return ''
+  // 将 Markdown 链接 [text](url) 转为可点击的 <a>
+  return props.notice.content
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
+    .replace(/\n/g, '<br>')
+})
 
 const formatTime = (iso) => {
   if (!iso) return ''
@@ -163,6 +171,11 @@ const handleConfirm = () => {
   line-height: 1.7;
   margin: 0 0 0.875rem 0;
   white-space: pre-wrap;
+}
+
+.notice-content :deep(a) {
+  color: #FDD152;
+  text-decoration: underline;
 }
 
 .notice-time {
