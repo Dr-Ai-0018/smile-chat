@@ -5,3 +5,13 @@ memory/
 reference/
 
 data_management/backups
+
+test_img/
+test_json/
+/*.md
+!README.md
+# 中文文件名md
+/进一步开发.md
+nginx.conf
+reference/
+reference.zip
