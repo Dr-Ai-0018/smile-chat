@@ -48,6 +48,7 @@
 
 <script setup>
 import { ref, computed } from 'vue'
+import { formatShanghaiDateTime } from '../utils/datetime'
 
 const props = defineProps({
   visible: { type: Boolean, default: false },
@@ -69,11 +70,7 @@ const renderedContent = computed(() => {
 const formatTime = (iso) => {
   if (!iso) return ''
   try {
-    const d = new Date(iso)
-    return d.toLocaleString('zh-CN', {
-      year: 'numeric', month: '2-digit', day: '2-digit',
-      hour: '2-digit', minute: '2-digit'
-    })
+    return formatShanghaiDateTime(iso)
   } catch {
     return iso
   }

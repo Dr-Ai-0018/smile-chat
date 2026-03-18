@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pathlib import Path
 from pydantic import BaseModel
 from typing import List
+import os
 import secrets
 import json
 from datetime import datetime, timezone, timedelta
@@ -49,6 +50,7 @@ async def list_users(
             continue
 
         msg_count = storage.count_chat_messages(user_id)
+        state = storage.get_user_experiment_state(user_id)
         users.append({
             "id": user_id,
             "username": user.get("username"),
@@ -56,9 +58,13 @@ async def list_users(
             "created_at": user.get("created_at"),
             "message_count": msg_count,
             "condition": user.get("self_disclosure_condition", "none"),
+            "weekly_checkin_count": state.get("weekly_checkin_count", 0),
         })
 
-    return {"users": users}
+    return {
+        "users": users,
+        "threshold": MIN_WEEKLY_CHECKINS_FOR_SURVEY,
+    }
 
 @router.get("/user/{user_id}/history")
 async def get_user_history(
@@ -407,3 +413,32 @@ async def update_all_settings(
             raise HTTPException(status_code=400, detail="打卡题目不能全为空")
     settings = storage.update_settings(updates)
     return settings
+
+
+# ==================== 打卡相关 ====================
+MIN_WEEKLY_CHECKINS_FOR_SURVEY = int(os.getenv("MIN_WEEKLY_CHECKINS_FOR_SURVEY", "2"))
+
+@router.get("/checkin/incomplete")
+async def get_incomplete_checkin_users(
+    admin_id: int = Depends(is_admin),
+):
+    """获取本周未完成打卡的用户列表（weekly_checkin_count < 阈值）"""
+    result = []
+    for user in storage.read_users():
+        user_id = user.get("id")
+        if not isinstance(user_id, int):
+            continue
+        state = storage.get_user_experiment_state(user_id)
+        weekly_count = state.get("weekly_checkin_count", 0)
+        if weekly_count < MIN_WEEKLY_CHECKINS_FOR_SURVEY:
+            result.append({
+                "id": user_id,
+                "username": user.get("username"),
+                "weekly_checkin_count": weekly_count,
+                "required": MIN_WEEKLY_CHECKINS_FOR_SURVEY,
+            })
+    return {
+        "users": result,
+        "threshold": MIN_WEEKLY_CHECKINS_FOR_SURVEY,
+        "total": len(result),
+    }

@@ -39,6 +39,11 @@ class AIService:
         self.config = self._load_config()
         self.context_config = self._load_context_config()
 
+    def refresh_context_config(self) -> dict:
+        """每次请求前重新加载上下文配置，确保管理台修改立即生效。"""
+        self.context_config = self._load_context_config()
+        return self.context_config
+
     def _build_v2_response_schema(self, for_gemini: bool = False) -> Dict[str, Any]:
         schema: Dict[str, Any] = {
             "type": "object",
@@ -205,20 +210,20 @@ class AIService:
     
     def _load_context_config(self) -> dict:
         """加载上下文配置"""
+        default_config = {
+            "max_messages": 80,
+            "image_rounds": 5,
+        }
         if not self.context_config_path.exists():
-            default_config = {
-                "max_messages": 80,
-                "max_tokens": 12000,
-                "image_rounds": 5
-            }
             with open(self.context_config_path, "w", encoding="utf-8") as f:
                 json.dump(default_config, f, ensure_ascii=False, indent=2)
             return self._apply_env_overrides_context(default_config)
         
         with open(self.context_config_path, "r", encoding="utf-8") as f:
-            config = json.load(f)
-        if not isinstance(config, dict):
-            config = {}
+            raw = json.load(f)
+        config = dict(default_config)
+        if isinstance(raw, dict):
+            config.update(raw)
         return self._apply_env_overrides_context(config)
     
     def _get_user_memory_dir(self, user_id: int) -> Path:
@@ -848,6 +853,8 @@ class AIService:
         """
         if cancel_event and cancel_event.is_set():
             raise asyncio.CancelledError("聊天请求已被新的消息中断")
+
+        self.refresh_context_config()
         
         # 1. 获取实验条件和加载对应提示词
         condition = self.session_state.get_condition(user_id)
@@ -1035,13 +1042,6 @@ class AIService:
             
             include_image = image and isinstance(image, str) and round_count_from_end[i] <= image_rounds
             
-            # DEBUG: 打印图片信息
-            if image:
-                img_len = len(image) if isinstance(image, str) else 0
-                img_preview = image[:100] if isinstance(image, str) else str(image)
-                print(f"[DEBUG] Message {i}: role={role}, has_image=True, image_len={img_len}, include_image={include_image}")
-                print(f"[DEBUG] Image preview: {img_preview}...")
-            
             if include_image:
                 content_parts = []
                 # 如果没有文字内容，添加提示文本让模型知道要看图片
@@ -1053,13 +1053,11 @@ class AIService:
                         "type": "image_url",
                         "image_url": {"url": image}
                     })
-                    print(f"[DEBUG] Added image_url with data: prefix, len={len(image)}, total content_parts={len(content_parts)}")
                 else:
                     content_parts.append({
                         "type": "image_url",
                         "image_url": {"url": f"data:image/jpeg;base64,{image}"}
                     })
-                    print(f"[DEBUG] Added image_url with base64 prefix, len={len(image)}, total content_parts={len(content_parts)}")
                 
                 api_messages.append({"role": role, "content": content_parts})
             else:
