@@ -129,14 +129,6 @@ async def send_message_with_context(
     """发送消息（带完整上下文，支持图片）"""
     cancel_event = register_request(user_id)
     
-    # DEBUG: 打印收到的消息
-    for i, m in enumerate(request.messages):
-        if m.image:
-            img_len = len(m.image) if m.image else 0
-            img_preview = m.image[:100] if m.image else "None"
-            print(f"[DEBUG ROUTER] Message {i}: role={m.role}, has_image=True, image_len={img_len}")
-            print(f"[DEBUG ROUTER] Image preview: {img_preview}...")
-    
     # 获取最后一条用户消息
     user_messages = [m for m in request.messages if m.role == "user"]
     if not user_messages:
@@ -159,10 +151,23 @@ async def send_message_with_context(
     user_msg_time = get_china_now()
     _record_user_msg_time(user_id, last_user_msg.content or "", user_msg_time)
 
+    context_config = ai_service.refresh_context_config()
+    context_limit = int(context_config.get("max_messages", 80) or 80)
+
+    # 由服务端统一基于持久化历史组装上下文，避免前端裁剪影响实际配置
+    context_messages = [
+        {
+            "role": item.get("role"),
+            "content": item.get("content", "") or "",
+            "image": item.get("image"),
+        }
+        for item in storage.get_chat_history(user_id=user_id, limit=context_limit)
+    ]
+
     try:
         # 调用AI服务 (使用v2协议化接口)
         response = await ai_service.chat_with_context_v2(
-            messages=[m.model_dump() for m in request.messages],
+            messages=context_messages,
             user_id=user_id,
             cancel_event=cancel_event
         )

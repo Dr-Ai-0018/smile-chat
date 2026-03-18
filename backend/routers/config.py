@@ -11,28 +11,35 @@ from routers.admin import is_admin
 router = APIRouter()
 
 CONFIG_DIR = Path(__file__).parent.parent / "config"
+DEFAULT_CONTEXT_CONFIG = {
+    "max_messages": 80,
+    "image_rounds": 5,
+}
 
 class ContextConfig(BaseModel):
     max_messages: int
-    max_tokens: int
-    system_prompt_tokens: int
-    reserve_tokens: int
+    image_rounds: int = 5
+
+
+def _load_context_config_file() -> dict:
+    config = dict(DEFAULT_CONTEXT_CONFIG)
+    config_file = CONFIG_DIR / "context_config.json"
+
+    if not config_file.exists():
+        return config
+
+    with open(config_file, "r", encoding="utf-8") as f:
+        raw = json.load(f)
+
+    if isinstance(raw, dict):
+        config.update(raw)
+
+    return config
 
 @router.get("/context")
 async def get_context_config(admin_id: int = Depends(is_admin)):
     """获取上下文配置"""
-    config_file = CONFIG_DIR / "context_config.json"
-    
-    if not config_file.exists():
-        return {
-            "max_messages": 20,
-            "max_tokens": 4000,
-            "system_prompt_tokens": 100,
-            "reserve_tokens": 1000
-        }
-    
-    with open(config_file, "r", encoding="utf-8") as f:
-        return json.load(f)
+    return _load_context_config_file()
 
 @router.post("/context")
 async def update_context_config(
@@ -46,14 +53,17 @@ async def update_context_config(
     # 验证配置
     if config.max_messages < 1 or config.max_messages > 100:
         raise HTTPException(status_code=400, detail="消息条数必须在1-100之间")
-    
-    if config.max_tokens < 500 or config.max_tokens > 32000:
-        raise HTTPException(status_code=400, detail="Token数必须在500-32000之间")
+
+    if config.image_rounds < 1 or config.image_rounds > 20:
+        raise HTTPException(status_code=400, detail="图片轮次必须在1-20之间")
+
+    payload = _load_context_config_file()
+    payload.update(config.model_dump())
     
     with open(config_file, "w", encoding="utf-8") as f:
-        json.dump(config.model_dump(), f, ensure_ascii=False, indent=2)
+        json.dump(payload, f, ensure_ascii=False, indent=2)
     
-    return {"message": "配置更新成功", "config": config}
+    return {"message": "配置更新成功", "config": payload}
 
 @router.get("/api")
 async def get_api_config(admin_id: int = Depends(is_admin)):

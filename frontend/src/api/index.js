@@ -93,8 +93,11 @@ export const adminAPI = {
   getInviteCodeSetting: () => client.get('/admin/settings/invite_code'),
   
   // 设置邀请码开关状态
-  setInviteCodeSetting: (enabled) => 
-    client.post('/admin/settings/invite_code', { enabled })
+  setInviteCodeSetting: (enabled) =>
+    client.post('/admin/settings/invite_code', { enabled }),
+
+  // 获取本周未完成打卡的用户
+  getIncompleteCheckins: () => client.get('/admin/checkin/incomplete'),
 }
 
 export const configAPI = {

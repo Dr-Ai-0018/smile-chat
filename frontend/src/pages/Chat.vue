@@ -214,6 +214,7 @@ import CheckinDialog from '../components/CheckinDialog.vue'
 import NoticePopup from '../components/NoticePopup.vue'
 import NoticeInbox from '../components/NoticeInbox.vue'
 import { resolveStaticUrl } from '../utils/url'
+import { formatShanghaiChatTimestamp, getShanghaiHour, getShanghaiIsoTimestamp } from '../utils/datetime'
 
 defineOptions({ name: 'Chat' })
 
@@ -264,7 +265,7 @@ const canSend = computed(() => {
 
 // 根据时间显示问候语
 const currentGreeting = computed(() => {
-  const hour = new Date().getHours()
+  const hour = getShanghaiHour()
   if (hour < 6) return '夜深了'
   if (hour < 9) return '早上好'
   if (hour < 12) return '上午好'
@@ -440,41 +441,25 @@ const requestAIResponse = async () => {
   currentAbortController = null
 }
 
-// 收集最近消息（包含图片，用于发送给AI）
+// 仅发送最后一条用户消息，Context 由服务端基于持久化历史统一组装
 const collectRecentMessages = () => {
-  const result = []
-  const imageRoundLimit = 5 // 最近5轮内的图片
-  let roundCount = 0
-  
-  // 从最新消息往前遍历
-  for (let i = messages.value.length - 1; i >= 0 && result.length < 80; i--) {
+  for (let i = messages.value.length - 1; i >= 0; i--) {
     const msg = messages.value[i]
-    
-    // 计算轮次（每个assistant回复算一轮）
-    if (msg.role === 'assistant') {
-      roundCount++
-    }
-    
-    const msgData = {
-      role: msg.role,
+    if (msg.role !== 'user') continue
+
+    const result = [{
+      role: 'user',
       content: msg.content || ''
+    }]
+
+    if (msg.image && typeof msg.image === 'string') {
+      result[0].image = msg.image
     }
-    
-    // 如果在图片轮次限制内且有图片，添加图片（确保是字符串）
-    if (msg.image && typeof msg.image === 'string' && roundCount <= imageRoundLimit) {
-      msgData.image = msg.image
-      // DEBUG: 打印图片信息
-      console.log(`[DEBUG] 收集消息 ${i}: role=${msg.role}, image_len=${msg.image.length}, preview=${msg.image.substring(0, 50)}...`)
-    }
-    
-    result.unshift(msgData)
+
+    return result
   }
-  
-  // DEBUG: 统计包含图片的消息数
-  const imgCount = result.filter(m => m.image).length
-  console.log(`[DEBUG] collectRecentMessages: total=${result.length}, with_image=${imgCount}`)
-  
-  return result
+
+  return []
 }
 
 // 流式渲染消息
@@ -558,13 +543,7 @@ const shouldShowTimestamp = (index) => {
 
 // 格式化时间戳
 const formatTimestamp = (timestamp) => {
-  const date = new Date(timestamp)
-  const month = date.getMonth() + 1
-  const day = date.getDate()
-  const hours = date.getHours().toString().padStart(2, '0')
-  const minutes = date.getMinutes().toString().padStart(2, '0')
-  const period = hours < 12 ? '上午' : '下午'
-  return `${month}/${day} ${period} ${hours}:${minutes}`
+  return formatShanghaiChatTimestamp(timestamp)
 }
 
 // 滚动到底部
@@ -783,7 +762,7 @@ const checkWeekendSurvey = async () => {
         id: res.notice_id,
         title: '本周问卷提醒',
         content: res.notice_content || '请填写本周问卷',
-        created_at: new Date().toISOString(),
+        created_at: getShanghaiIsoTimestamp(),
       }
       pendingNoticeQueue.value.unshift(surveyNotice)
       if (!pendingNotice.value) showNextNotice()

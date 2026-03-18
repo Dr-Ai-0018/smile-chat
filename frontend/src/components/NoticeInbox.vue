@@ -72,6 +72,7 @@
 
 <script setup>
 import { ref, onMounted, onUnmounted } from 'vue'
+import { formatShanghaiMonthDay, formatShanghaiTime, getShanghaiDayNumber } from '../utils/datetime'
 
 const props = defineProps({
   notices: { type: Array, default: () => [] },
@@ -117,14 +118,13 @@ const formatTimeShort = (iso) => {
   try {
     const d = new Date(iso)
     const now = new Date()
-    const diffMs = now - d
-    const diffDays = Math.floor(diffMs / 86400000)
+    const diffDays = getShanghaiDayNumber(now) - getShanghaiDayNumber(d)
     if (diffDays === 0) {
-      return d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+      return formatShanghaiTime(d)
     } else if (diffDays < 7) {
       return `${diffDays}天前`
     } else {
-      return d.toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' })
+      return formatShanghaiMonthDay(d)
     }
   } catch {
     return ''

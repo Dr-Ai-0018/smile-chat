@@ -85,9 +85,12 @@
         <div class="panel-header">
           <h2>用户管理</h2>
           <div class="panel-actions">
-            <input 
-              v-model="userSearch" 
-              type="text" 
+            <button class="export-btn" @click="exportIncompleteCheckins" title="导出本周未完成打卡的用户">
+              导出未完成打卡
+            </button>
+            <input
+              v-model="userSearch"
+              type="text"
               placeholder="搜索用户..."
               class="search-input"
             />
@@ -102,6 +105,7 @@
                 <th>用户名</th>
                 <th>实验条件</th>
                 <th>消息数</th>
+                <th>本周打卡</th>
                 <th>注册时间</th>
                 <th>操作</th>
               </tr>
@@ -119,6 +123,11 @@
                   </span>
                 </td>
                 <td class="count-cell">{{ user.message_count }}</td>
+                <td class="checkin-cell">
+                  <span :class="['checkin-badge', (user.weekly_checkin_count || 0) >= checkinThreshold ? 'done' : 'pending']">
+                    {{ user.weekly_checkin_count || 0 }}/{{ checkinThreshold }}
+                  </span>
+                </td>
                 <td class="date-cell">{{ formatDate(user.created_at) }}</td>
                 <td class="actions-cell">
                   <button class="action-btn view" @click="viewUserDetail(user)" title="查看详情">
@@ -304,19 +313,9 @@
                 <span class="config-hint">保留最近N条消息</span>
               </div>
               <div class="config-row">
-                <label>最大Token数</label>
-                <input v-model.number="contextConfig.max_tokens" type="number" min="1000" max="32000" />
-                <span class="config-hint">总上下文token限制</span>
-              </div>
-              <div class="config-row">
-                <label>系统提示Token</label>
-                <input v-model.number="contextConfig.system_prompt_tokens" type="number" min="50" max="500" />
-                <span class="config-hint">预留给系统提示</span>
-              </div>
-              <div class="config-row">
-                <label>保留Token</label>
-                <input v-model.number="contextConfig.reserve_tokens" type="number" min="500" max="4000" />
-                <span class="config-hint">预留给AI回复</span>
+                <label>图片保留轮次</label>
+                <input v-model.number="contextConfig.image_rounds" type="number" min="1" max="20" />
+                <span class="config-hint">最近N轮对话内保留图片</span>
               </div>
             </div>
             
@@ -657,6 +656,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { adminAPI, configAPI, promptAPI, settingsAPI } from '../api'
 import { toast, confirm } from '../utils/toast'
+import { formatShanghaiDateTime, formatShanghaiMonthDayTime, getShanghaiDateStamp } from '../utils/datetime'
 
 // 标签页配置
 const tabs = [
@@ -682,6 +682,7 @@ const inviteFilter = ref('all')
 const inviteCount = ref(5)
 const newInvites = ref([])
 const inviteCodeEnabled = ref(true)
+const checkinThreshold = ref(2)
 
 // 用户详情弹窗
 const showUserModal = ref(false)
@@ -698,9 +699,7 @@ const memoryLoading = ref(false)
 // 配置
 const contextConfig = ref({
   max_messages: 80,
-  max_tokens: 12000,
-  system_prompt_tokens: 100,
-  reserve_tokens: 1000
+  image_rounds: 5
 })
 
 // 提示系统
@@ -755,11 +754,42 @@ const loadUsers = async () => {
   try {
     const res = await adminAPI.getUsers()
     users.value = res.users
+    checkinThreshold.value = res.threshold || checkinThreshold.value
   } catch (err) {
     console.error('加载用户失败:', err)
     if (err.response?.status === 403) {
       toast.error('需要管理员权限')
     }
+  }
+}
+
+const getLocalDateStamp = () => {
+  return getShanghaiDateStamp()
+}
+
+const exportIncompleteCheckins = async () => {
+  try {
+    const res = await adminAPI.getIncompleteCheckins()
+    checkinThreshold.value = res.threshold
+    if (res.users.length === 0) {
+      toast.success('本周所有用户均已完成打卡')
+      return
+    }
+    const lines = [`本周未完成打卡用户（需 ${res.threshold} 次）`, '']
+    res.users.forEach(u => {
+      lines.push(`ID: ${u.id}  用户名: ${u.username}  已打卡: ${u.weekly_checkin_count}/${u.required}`)
+    })
+    const blob = new Blob([lines.join('\n')], { type: 'text/plain;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `未完成打卡_${getLocalDateStamp()}.txt`
+    a.click()
+    URL.revokeObjectURL(url)
+    toast.success(`已导出 ${res.users.length} 名未完成打卡用户`)
+  } catch (err) {
+    console.error('导出失败:', err)
+    toast.error('导出失败')
   }
 }
 
@@ -1151,13 +1181,12 @@ const getStatForGroup = (groupId) => {
 // 格式化
 const formatDate = (dateString) => {
   if (!dateString) return '-'
-  return new Date(dateString).toLocaleString('zh-CN')
+  return formatShanghaiDateTime(dateString) || '-'
 }
 
 const formatTime = (dateString) => {
   if (!dateString) return ''
-  const date = new Date(dateString)
-  return `${date.getMonth() + 1}/${date.getDate()} ${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`
+  return formatShanghaiMonthDayTime(dateString)
 }
 
 const formatCondition = (condition) => {
@@ -1487,6 +1516,42 @@ onMounted(() => {
   background: rgba(156, 163, 175, 0.2);
   color: #9ca3af;
   border: 1px solid rgba(156, 163, 175, 0.3);
+}
+
+/* Checkin Badge */
+.checkin-badge {
+  padding: 0.25rem 0.6rem;
+  border-radius: 12px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.checkin-badge.done {
+  background: rgba(34, 197, 94, 0.2);
+  color: #4ade80;
+  border: 1px solid rgba(34, 197, 94, 0.3);
+}
+
+.checkin-badge.pending {
+  background: rgba(251, 191, 36, 0.2);
+  color: #fbbf24;
+  border: 1px solid rgba(251, 191, 36, 0.3);
+}
+
+/* Export Button */
+.export-btn {
+  background: rgba(99, 102, 241, 0.2);
+  border: 1px solid rgba(99, 102, 241, 0.4);
+  color: #a5b4fc;
+  padding: 0.5rem 1rem;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  transition: background 0.2s;
+}
+
+.export-btn:hover {
+  background: rgba(99, 102, 241, 0.35);
 }
 
 /* Action Buttons */
