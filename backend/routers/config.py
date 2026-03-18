@@ -13,11 +13,17 @@ router = APIRouter()
 CONFIG_DIR = Path(__file__).parent.parent / "config"
 DEFAULT_CONTEXT_CONFIG = {
     "max_messages": 80,
+    "max_tokens": 12000,
+    "system_prompt_tokens": 100,
+    "reserve_tokens": 1000,
     "image_rounds": 5,
 }
 
 class ContextConfig(BaseModel):
     max_messages: int
+    max_tokens: int
+    system_prompt_tokens: int
+    reserve_tokens: int
     image_rounds: int = 5
 
 
@@ -53,6 +59,15 @@ async def update_context_config(
     # 验证配置
     if config.max_messages < 1 or config.max_messages > 100:
         raise HTTPException(status_code=400, detail="消息条数必须在1-100之间")
+
+    if config.max_tokens < 500 or config.max_tokens > 32000:
+        raise HTTPException(status_code=400, detail="Token数必须在500-32000之间")
+
+    if config.system_prompt_tokens < 50 or config.system_prompt_tokens > 2000:
+        raise HTTPException(status_code=400, detail="系统提示Token必须在50-2000之间")
+
+    if config.reserve_tokens < 100 or config.reserve_tokens > 8000:
+        raise HTTPException(status_code=400, detail="保留Token必须在100-8000之间")
 
     if config.image_rounds < 1 or config.image_rounds > 20:
         raise HTTPException(status_code=400, detail="图片轮次必须在1-20之间")
