@@ -1,4 +1,7 @@
 {
   "max_messages": 80,
+  "max_tokens": 12000,
+  "system_prompt_tokens": 100,
+  "reserve_tokens": 1000,
   "image_rounds": 5
 }

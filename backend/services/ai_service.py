@@ -212,6 +212,9 @@ class AIService:
         """加载上下文配置"""
         default_config = {
             "max_messages": 80,
+            "max_tokens": 12000,
+            "system_prompt_tokens": 100,
+            "reserve_tokens": 1000,
             "image_rounds": 5,
         }
         if not self.context_config_path.exists():
@@ -422,12 +425,18 @@ class AIService:
             if api_type in ("openai", "chat_completions"):
                 return False
 
+            b = (base_url or "").lower().rstrip("/")
+            # 只有明确是 Gemini 原生端点时，才走 generateContent。
+            # 很多第三方网关虽然代理 Gemini 模型，但接口仍然是 OpenAI 兼容的 /v1/chat/completions。
+            if b.endswith("/v1beta") or "/v1beta/" in b:
+                return True
+            if "generativelanguage.googleapis.com" in b:
+                return True
+            if b.endswith("/v1") or "/v1/" in b:
+                return False
+
             m = (model or "").lower()
             if "gemini" in m:
-                return True
-
-            b = (base_url or "").lower().rstrip("/")
-            if b.endswith("/v1beta") or "/v1beta/" in b:
                 return True
 
             n = (api_config.get("name") or "").lower()

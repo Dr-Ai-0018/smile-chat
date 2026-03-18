@@ -313,6 +313,21 @@
                 <span class="config-hint">保留最近N条消息</span>
               </div>
               <div class="config-row">
+                <label>最大Token数</label>
+                <input v-model.number="contextConfig.max_tokens" type="number" min="1000" max="32000" />
+                <span class="config-hint">总上下文token限制</span>
+              </div>
+              <div class="config-row">
+                <label>系统提示Token</label>
+                <input v-model.number="contextConfig.system_prompt_tokens" type="number" min="50" max="500" />
+                <span class="config-hint">预留给系统提示</span>
+              </div>
+              <div class="config-row">
+                <label>保留Token</label>
+                <input v-model.number="contextConfig.reserve_tokens" type="number" min="500" max="4000" />
+                <span class="config-hint">预留给AI回复</span>
+              </div>
+              <div class="config-row">
                 <label>图片保留轮次</label>
                 <input v-model.number="contextConfig.image_rounds" type="number" min="1" max="20" />
                 <span class="config-hint">最近N轮对话内保留图片</span>
@@ -699,6 +714,9 @@ const memoryLoading = ref(false)
 // 配置
 const contextConfig = ref({
   max_messages: 80,
+  max_tokens: 12000,
+  system_prompt_tokens: 100,
+  reserve_tokens: 1000,
   image_rounds: 5
 })
 
