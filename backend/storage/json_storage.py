@@ -720,6 +720,12 @@ class JsonStorage:
         user_msg_count = sum(1 for m in items if m.get("role") == "user")
         return max(0, user_msg_count - last_reset_msg_count)
 
+    def count_total_user_messages(self, user_id: int) -> int:
+        path = self._chat_history_file(user_id)
+        data = self.read_json(path, {"next_id": 1, "items": []})
+        items = data.get("items", [])
+        return sum(1 for m in items if m.get("role") == "user")
+
     # ==================== Notice System ====================
 
     def _notices_file(self) -> Path:
@@ -826,6 +832,10 @@ class JsonStorage:
                 return s
         return None
 
+    def get_user_notice_states(self, user_id: int) -> List[Dict[str, Any]]:
+        data = self.read_json(self._user_notice_states_file(), {"items": []})
+        return [s for s in data.get("items", []) if s.get("user_id") == user_id]
+
     def upsert_user_notice_state(self, user_id: int, notice_id: int, updates: Dict[str, Any]) -> Dict[str, Any]:
         path = self._user_notice_states_file()
         with self._lock_paths([path]):
@@ -845,6 +855,7 @@ class JsonStorage:
 
     def get_pending_notices_for_user(self, user_id: int) -> List[Dict[str, Any]]:
         """返回已触发但未读的通知（弹窗用）"""
+        user_msg_count = self.count_total_user_messages(user_id)
         notices = self.get_notices(enabled_only=True)
         # 只取全局通知 + 该用户专属通知
         notices = [n for n in notices if "user_id" not in n or n["user_id"] == user_id]
@@ -856,6 +867,9 @@ class JsonStorage:
         }
         result = []
         for n in sorted(notices, key=lambda x: -x.get("priority", 0)):
+            trigger_msg_count = int(n.get("trigger_msg_count", 0) or 0)
+            if trigger_msg_count > 0 and user_msg_count < trigger_msg_count:
+                continue
             state = states_map.get(n["id"])
             # 弹窗只自动展示一次；展示过后改为仅在收件箱回看
             if state and (state.get("read_at") or state.get("shown_at")):
@@ -865,6 +879,7 @@ class JsonStorage:
 
     def get_inbox_notices_for_user(self, user_id: int) -> List[Dict[str, Any]]:
         """返回所有已触发通知（含已读状态，收件箱用）"""
+        user_msg_count = self.count_total_user_messages(user_id)
         notices = self.get_notices(enabled_only=True)
         # 只取全局通知 + 该用户专属通知
         notices = [n for n in notices if "user_id" not in n or n["user_id"] == user_id]
@@ -876,6 +891,9 @@ class JsonStorage:
         }
         result = []
         for n in sorted(notices, key=lambda x: -x.get("priority", 0)):
+            trigger_msg_count = int(n.get("trigger_msg_count", 0) or 0)
+            if trigger_msg_count > 0 and user_msg_count < trigger_msg_count:
+                continue
             state = states_map.get(n["id"])
             result.append({
                 **n,

@@ -218,6 +218,8 @@ import { formatShanghaiChatTimestamp, getShanghaiHour, getShanghaiIsoTimestamp }
 
 defineOptions({ name: 'Chat' })
 
+const NOTICE_SYNC_KEY = 'smile-chat-notice-read-sync'
+
 const router = useRouter()
 const user = ref(JSON.parse(localStorage.getItem('user') || '{}'))
 
@@ -244,6 +246,7 @@ const userAvatarUrl = ref('')
 const showPromptDialog = ref(false)
 const currentPrompt = ref(null)
 const promptQueue = ref([])
+const promptServerMsgCount = ref(0)
 
 // 打卡系统状态
 const canCheckin = ref(false)
@@ -257,6 +260,42 @@ const inboxNotices = ref([])
 const unreadNoticeCount = computed(() =>
   inboxNotices.value.filter(n => !n.read_at).length
 )
+
+const isPageVisible = () => {
+  if (typeof document === 'undefined') return true
+  return document.visibilityState === 'visible' && !document.hidden
+}
+
+const removeNoticeFromLocalState = (noticeId) => {
+  pendingNoticeQueue.value = pendingNoticeQueue.value.filter(n => n.id !== noticeId)
+  inboxNotices.value = inboxNotices.value.map(n =>
+    n.id === noticeId ? { ...n, read_at: n.read_at || getShanghaiIsoTimestamp() } : n
+  )
+  if (pendingNotice.value?.id === noticeId) {
+    pendingNotice.value = null
+    setTimeout(() => showNextNotice(), 0)
+  }
+}
+
+const broadcastNoticeRead = (noticeId) => {
+  try {
+    localStorage.setItem(NOTICE_SYNC_KEY, JSON.stringify({
+      id: noticeId,
+      at: Date.now(),
+    }))
+  } catch {}
+}
+
+const mergePendingNotices = (notices) => {
+  const existingIds = new Set([
+    ...pendingNoticeQueue.value.map(n => n.id),
+    ...(pendingNotice.value ? [pendingNotice.value.id] : []),
+  ])
+  const fresh = (notices || []).filter(n => n?.id && !existingIds.has(n.id))
+  if (fresh.length > 0) {
+    pendingNoticeQueue.value.push(...fresh)
+  }
+}
 
 // 计算是否可以发送（loading时也可以发，用于中断当前请求）
 const canSend = computed(() => {
@@ -616,6 +655,7 @@ const syncUserAvatar = async () => {
 const evaluatePrompts = async () => {
   try {
     const response = await promptAPI.evaluate(0)
+    promptServerMsgCount.value = Number(response.server_msg_count || 0)
     const prompts = response.prompts_to_show || []
     
     if (prompts.length > 0) {
@@ -644,7 +684,7 @@ const showNextPrompt = () => {
   promptAPI.recordShown(
     currentPrompt.value.prompt_group_id,
     clientRequestId,
-    0
+    promptServerMsgCount.value
   ).catch(err => console.error('记录展示失败:', err))
 }
 
@@ -655,7 +695,7 @@ const handlePromptSubmit = async (answer) => {
   const clientRequestId = generateId()
   
   try {
-    await promptAPI.submitAnswer(groupId, clientRequestId, answer, 0)
+    await promptAPI.submitAnswer(groupId, clientRequestId, answer, promptServerMsgCount.value)
   } catch (err) {
     console.error('提交回答失败:', err)
   }
@@ -674,7 +714,7 @@ const handlePromptSkip = async () => {
   const clientRequestId = generateId()
   
   try {
-    await promptAPI.skip(groupId, clientRequestId, 0)
+    await promptAPI.skip(groupId, clientRequestId, promptServerMsgCount.value)
   } catch (err) {
     console.error('跳过提示失败:', err)
   }
@@ -717,7 +757,7 @@ const loadPendingNotices = async () => {
     const res = await noticeAPI.getPending()
     const notices = res.notices || []
     if (notices.length > 0) {
-      pendingNoticeQueue.value = notices
+      mergePendingNotices(notices)
       showNextNotice()
     }
   } catch (e) {
@@ -735,6 +775,7 @@ const loadInbox = async () => {
 }
 
 const showNextNotice = () => {
+  if (!isPageVisible()) return
   if (pendingNoticeQueue.value.length === 0) {
     pendingNotice.value = null
     return
@@ -745,12 +786,15 @@ const showNextNotice = () => {
 
 const handleNoticeDismiss = async (noticeId) => {
   await noticeAPI.markRead(noticeId).catch(() => {})
-  pendingNotice.value = null
+  broadcastNoticeRead(noticeId)
+  removeNoticeFromLocalState(noticeId)
   setTimeout(() => showNextNotice(), 300)
 }
 
 const handleNoticeRead = async (noticeId) => {
   await noticeAPI.markRead(noticeId).catch(() => {})
+  broadcastNoticeRead(noticeId)
+  removeNoticeFromLocalState(noticeId)
   await loadInbox()
 }
 
@@ -764,7 +808,7 @@ const checkWeekendSurvey = async () => {
         content: res.notice_content || '请填写本周问卷',
         created_at: getShanghaiIsoTimestamp(),
       }
-      pendingNoticeQueue.value.unshift(surveyNotice)
+      mergePendingNotices([surveyNotice])
       if (!pendingNotice.value) showNextNotice()
       // 刷新收件箱，让问卷通知出现在邮件图标里
       loadInbox()
@@ -774,23 +818,41 @@ const checkWeekendSurvey = async () => {
   }
 }
 
+const handleVisibilityChange = async () => {
+  if (!isPageVisible()) return
+  await Promise.all([refreshCheckinStatus(), loadPendingNotices(), loadInbox()])
+  await checkWeekendSurvey()
+  if (!pendingNotice.value) {
+    showNextNotice()
+  }
+}
+
+const handleStorageSync = (event) => {
+  if (event.key !== NOTICE_SYNC_KEY || !event.newValue) return
+  try {
+    const payload = JSON.parse(event.newValue)
+    if (payload?.id) {
+      removeNoticeFromLocalState(payload.id)
+    }
+  } catch {}
+}
+
 onMounted(async () => {
   // 并行加载历史和同步头像
   await Promise.all([loadHistory(), syncUserAvatar()])
-  if (inputElement.value) {
-    inputElement.value.focus()
-  }
   // 初始化打卡状态和通知
   await Promise.all([refreshCheckinStatus(), loadPendingNotices(), loadInbox()])
   // 周末问卷检查
   checkWeekendSurvey()
+  document.addEventListener('visibilitychange', handleVisibilityChange)
+  window.addEventListener('storage', handleStorageSync)
 })
 
 onActivated(() => {
   scrollToBottom()
-  nextTick(() => {
-    inputElement.value?.focus()
-  })
+  if (isPageVisible()) {
+    handleVisibilityChange()
+  }
 })
 
 onUnmounted(() => {
@@ -798,6 +860,8 @@ onUnmounted(() => {
   if (currentAbortController) {
     currentAbortController.abort()
   }
+  document.removeEventListener('visibilitychange', handleVisibilityChange)
+  window.removeEventListener('storage', handleStorageSync)
 })
 </script>
 

@@ -19,6 +19,18 @@ router = APIRouter()
 storage = JsonStorage()
 
 
+def _get_total_user_msg_count(user_id: int) -> int:
+    return storage.count_total_user_messages(user_id)
+
+
+def _resolve_chat_count_snapshot(user_id: int, client_snapshot: int) -> int:
+    """统一使用后端统计作为实验事件快照口径。"""
+    server_count = _get_total_user_msg_count(user_id)
+    if isinstance(client_snapshot, int) and client_snapshot > 0:
+        return max(server_count, client_snapshot)
+    return server_count
+
+
 # ==================== Pydantic Models ====================
 class PromptContent(BaseModel):
     title: str = ""
@@ -238,11 +250,7 @@ async def evaluate_prompts(
     
     # 获取后端实际的用户消息数
     total_user_msg_count = 0
-    chat_history_path = storage._chat_history_file(user_id)
-    chat_data = storage.read_json(chat_history_path, {"next_id": 1, "items": []})
-    for m in chat_data.get("items", []):
-        if m.get("role") == "user":
-            total_user_msg_count += 1
+    total_user_msg_count = _get_total_user_msg_count(user_id)
     
     now = get_china_now()
     
@@ -352,11 +360,12 @@ async def record_prompt_shown(
         return {"message": "已记录", "duplicate": True}
     
     # 记录事件
+    chat_count_snapshot = _resolve_chat_count_snapshot(user_id, req.chat_count_snapshot)
     storage.append_prompt_event(
         user_id=user_id,
         group_id=group_id,
         event_type="shown",
-        chat_count_snapshot=req.chat_count_snapshot,
+        chat_count_snapshot=chat_count_snapshot,
         client_request_id=req.client_request_id,
     )
     
@@ -388,11 +397,12 @@ async def submit_prompt_answer(
         return {"message": "已记录", "duplicate": True}
     
     # 记录事件
+    chat_count_snapshot = _resolve_chat_count_snapshot(user_id, req.chat_count_snapshot)
     storage.append_prompt_event(
         user_id=user_id,
         group_id=group_id,
         event_type="answered",
-        chat_count_snapshot=req.chat_count_snapshot,
+        chat_count_snapshot=chat_count_snapshot,
         answer=req.answer,
         client_request_id=req.client_request_id,
     )
@@ -402,11 +412,7 @@ async def submit_prompt_answer(
     frequency_mode = group.get("frequency_mode", "once")
     
     # 获取当前用户消息总数作为新的重置点
-    total_user_msg_count = 0
-    chat_data = storage.read_json(storage._chat_history_file(user_id), {"next_id": 1, "items": []})
-    for m in chat_data.get("items", []):
-        if m.get("role") == "user":
-            total_user_msg_count += 1
+    total_user_msg_count = _get_total_user_msg_count(user_id)
     
     updates = {
         "times_answered": state.get("times_answered", 0) + 1,
@@ -436,20 +442,17 @@ async def skip_prompt(
         return {"message": "已记录", "duplicate": True}
     
     # 记录事件
+    chat_count_snapshot = _resolve_chat_count_snapshot(user_id, req.chat_count_snapshot)
     storage.append_prompt_event(
         user_id=user_id,
         group_id=group_id,
         event_type="skipped",
-        chat_count_snapshot=req.chat_count_snapshot,
+        chat_count_snapshot=chat_count_snapshot,
         client_request_id=req.client_request_id,
     )
     
     # 获取当前用户消息总数作为新的重置点
-    total_user_msg_count = 0
-    chat_data = storage.read_json(storage._chat_history_file(user_id), {"next_id": 1, "items": []})
-    for m in chat_data.get("items", []):
-        if m.get("role") == "user":
-            total_user_msg_count += 1
+    total_user_msg_count = _get_total_user_msg_count(user_id)
     
     # 更新用户状态：跳过也重置计数，避免立即再次触发
     state = storage.get_user_prompt_state(user_id, group_id) or {}
@@ -470,11 +473,7 @@ async def reset_prompt_counter(
     如果不指定 prompt_group_id，则重置所有。
     """
     # 获取当前用户消息总数
-    total_user_msg_count = 0
-    chat_data = storage.read_json(storage._chat_history_file(user_id), {"next_id": 1, "items": []})
-    for m in chat_data.get("items", []):
-        if m.get("role") == "user":
-            total_user_msg_count += 1
+    total_user_msg_count = _get_total_user_msg_count(user_id)
     
     if req.prompt_group_id:
         storage.upsert_user_prompt_state(user_id, req.prompt_group_id, {

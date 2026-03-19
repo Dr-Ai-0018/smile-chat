@@ -2,12 +2,16 @@
 管理路由 - 用户管理、邀请码管理、查看用户数据
 """
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from pathlib import Path
 from pydantic import BaseModel
 from typing import Any, Dict, List, Optional
 import os
 import secrets
 import json
+import io
+import re
+import zipfile
 from datetime import datetime, timezone, timedelta
 
 # 中国时区 UTC+8
@@ -181,6 +185,7 @@ def _build_user_export_payload(user_id: int) -> Dict[str, Any]:
     history_dir = memory_dir / "history"
     ltm_file = memory_dir / "ltm" / "long_term_memory.txt"
     json_memory_file = memory_dir / "json" / "memory.json"
+    logs_dir = memory_dir / "logs"
 
     history_files: List[Dict[str, Any]] = []
     if history_dir.exists():
@@ -188,6 +193,14 @@ def _build_user_export_payload(user_id: int) -> Dict[str, Any]:
             history_files.append({
                 "filename": file.name,
                 "content": _safe_read_text(file),
+            })
+
+    raw_log_files: List[Dict[str, Any]] = []
+    if logs_dir.exists():
+        for file in sorted(logs_dir.glob("*.json")):
+            raw_log_files.append({
+                "filename": file.name,
+                "content": _safe_read_json(file),
             })
 
     sanitized_user = {k: v for k, v in user.items() if k != "pwd_hash"}
@@ -199,11 +212,15 @@ def _build_user_export_payload(user_id: int) -> Dict[str, Any]:
         "checkins": storage.get_checkin_records(user_id),
         "request_logs": chat_logger.get_paired_logs(user_id, limit=0),
         "prompt_events": storage.get_prompt_events(user_id=user_id, limit=100000),
+        "prompt_states": storage.get_user_prompt_states(user_id),
+        "notices": storage.get_inbox_notices_for_user(user_id),
+        "notice_states": storage.get_user_notice_states(user_id),
         "history": storage.get_chat_history(user_id=user_id, limit=0),
         "memory": {
             "long_term": _safe_read_text(ltm_file),
             "json_memory": _safe_read_json(json_memory_file),
             "history_files": history_files,
+            "raw_logs": raw_log_files,
         },
     }
 
@@ -740,6 +757,22 @@ class UserExportRequest(PydanticBaseModel):
     user_ids: List[int]
 
 
+def _sanitize_export_name(value: str, fallback: str) -> str:
+    text = (value or "").strip()
+    if not text:
+        text = fallback
+    text = re.sub(r'[\\/:*?"<>|]+', "_", text)
+    text = re.sub(r"\s+", " ", text).strip().rstrip(".")
+    return text or fallback
+
+
+def _zip_write_json(zip_file: zipfile.ZipFile, path: str, payload: Any) -> None:
+    zip_file.writestr(
+        path,
+        json.dumps(payload, ensure_ascii=False, indent=2),
+    )
+
+
 @router.post("/checkin/weekly-cleanup")
 async def trigger_weekly_cleanup(
     req: WeeklyCleanupRequest,
@@ -785,6 +818,97 @@ async def export_users_raw_data(
         "user_count": len(export_items),
         "users": export_items,
     }
+
+
+@router.post("/users/export-zip")
+async def export_users_zip(
+    req: UserExportRequest,
+    admin_id: int = Depends(is_admin),
+):
+    """将选中用户的原始数据按目录结构打包为 zip"""
+    user_ids = []
+    seen = set()
+    for value in req.user_ids:
+        try:
+            user_id = int(value)
+        except Exception:
+            continue
+        if user_id <= 0 or user_id in seen:
+            continue
+        seen.add(user_id)
+        user_ids.append(user_id)
+
+    if not user_ids:
+        raise HTTPException(status_code=400, detail="至少选择一位用户")
+
+    export_items = [_build_user_export_payload(user_id) for user_id in user_ids]
+    generated_at = get_china_now().isoformat()
+    filename = f"用户全量原始数据_{get_china_now().strftime('%Y-%m-%d_%H-%M-%S')}.zip"
+
+    archive_buffer = io.BytesIO()
+    used_folder_names = set()
+
+    with zipfile.ZipFile(archive_buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as zip_file:
+        _zip_write_json(zip_file, "manifest.json", {
+            "generated_at": generated_at,
+            "user_count": len(export_items),
+            "user_ids": user_ids,
+        })
+
+        for item in export_items:
+            user = item.get("user") or {}
+            user_id = int(user.get("id"))
+            username = _sanitize_export_name(str(user.get("username") or ""), f"user_{user_id}")
+            folder_name = f"{username}_{user_id}"
+            if folder_name in used_folder_names:
+                folder_name = f"{folder_name}_{len(used_folder_names) + 1}"
+            used_folder_names.add(folder_name)
+
+            base = f"{folder_name}/"
+            _zip_write_json(zip_file, f"{base}user.json", item.get("user") or {})
+            _zip_write_json(zip_file, f"{base}metrics.json", item.get("metrics") or {})
+            _zip_write_json(zip_file, f"{base}experiment_state.json", item.get("experiment_state") or {})
+            _zip_write_json(zip_file, f"{base}checkins.json", item.get("checkins") or [])
+            _zip_write_json(zip_file, f"{base}request_logs.json", item.get("request_logs") or [])
+            _zip_write_json(zip_file, f"{base}prompt_events.json", item.get("prompt_events") or [])
+            _zip_write_json(zip_file, f"{base}prompt_states.json", item.get("prompt_states") or [])
+            _zip_write_json(zip_file, f"{base}notices.json", item.get("notices") or [])
+            _zip_write_json(zip_file, f"{base}notice_states.json", item.get("notice_states") or [])
+            _zip_write_json(zip_file, f"{base}chat_history.json", item.get("history") or [])
+
+            memory = item.get("memory") or {}
+            zip_file.writestr(f"{base}memory/long_term_memory.txt", memory.get("long_term") or "")
+            _zip_write_json(zip_file, f"{base}memory/json_memory.json", memory.get("json_memory") or {})
+
+            history_files = memory.get("history_files") or []
+            for index, history_file in enumerate(history_files, start=1):
+                raw_name = str((history_file or {}).get("filename") or f"history_{index}.txt")
+                safe_name = _sanitize_export_name(raw_name, f"history_{index}.txt")
+                if not safe_name.lower().endswith(".txt"):
+                    safe_name = f"{safe_name}.txt"
+                zip_file.writestr(
+                    f"{base}memory/history_files/{safe_name}",
+                    str((history_file or {}).get("content") or ""),
+                )
+
+            raw_logs = memory.get("raw_logs") or []
+            for index, raw_log in enumerate(raw_logs, start=1):
+                raw_name = str((raw_log or {}).get("filename") or f"log_{index}.json")
+                safe_name = _sanitize_export_name(raw_name, f"log_{index}.json")
+                if not safe_name.lower().endswith(".json"):
+                    safe_name = f"{safe_name}.json"
+                _zip_write_json(
+                    zip_file,
+                    f"{base}memory/raw_logs/{safe_name}",
+                    (raw_log or {}).get("content") or {},
+                )
+
+    archive_buffer.seek(0)
+    headers = {
+        "Content-Disposition": f'attachment; filename="{filename}"',
+        "X-Export-Filename": filename,
+    }
+    return StreamingResponse(archive_buffer, media_type="application/zip", headers=headers)
 
 # ==================== 邀请码开关 ====================
 class InviteCodeToggleRequest(PydanticBaseModel):
