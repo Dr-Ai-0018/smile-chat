@@ -2,6 +2,8 @@
  * API接口定义
  */
 import client from './client'
+import axios from 'axios'
+import { API_BASE_URL } from './client'
 
 export const authAPI = {
   // 登录
@@ -100,6 +102,14 @@ export const adminAPI = {
     return client.get(`/admin/user/${userId}/detail${suffix}`)
   },
   exportUsers: (userIds) => client.post('/admin/users/export', { user_ids: userIds }),
+  exportUsersZip: (userIds) => {
+    const token = localStorage.getItem('token')
+    return axios.post(`${API_BASE_URL}/admin/users/export-zip`, { user_ids: userIds }, {
+      responseType: 'blob',
+      timeout: 300000,
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+  },
   
   // 获取邀请码开关状态
   getInviteCodeSetting: () => client.get('/admin/settings/invite_code'),

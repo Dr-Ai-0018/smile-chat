@@ -242,9 +242,9 @@
               class="bulk-export-btn"
               :disabled="selectedUserIds.size === 0"
               @click="exportSelectedUsers"
-              title="导出选中用户的全量原始数据快照"
+              title="导出选中用户的 ZIP 数据包"
             >
-              批量导出 ({{ selectedUserIds.size }})
+              批量导出 ZIP ({{ selectedUserIds.size }})
             </button>
             <input
               v-model="userSearch"
@@ -1337,11 +1337,66 @@
         </div>
       </div>
     </section>
+
+    <div v-if="showExportModal" class="modal-overlay">
+      <div class="modal export-modal">
+        <div class="modal-header">
+          <span class="modal-icon" :class="exportState === 'ready' ? 'success' : exportState === 'error' ? 'danger' : 'normal'">
+            <template v-if="exportState === 'ready'">✓</template>
+            <template v-else-if="exportState === 'error'">✕</template>
+            <template v-else>⏳</template>
+          </span>
+          <h3>{{ exportState === 'ready' ? '导出已完成' : exportState === 'error' ? '导出失败' : '正在打包导出' }}</h3>
+        </div>
+        <p class="modal-message">
+          <template v-if="exportState === 'packaging'">
+            正在整理选中用户的原始数据并打包为 ZIP，请稍候，不要关闭页面。
+          </template>
+          <template v-else-if="exportState === 'ready'">
+            已为 {{ exportTargetCount }} 位用户生成 ZIP 数据包，浏览器已尝试自动下载。
+          </template>
+          <template v-else>
+            {{ exportErrorMessage || '导出失败，请稍后重试。' }}
+          </template>
+        </p>
+        <div v-if="exportState === 'packaging'" class="export-progress">
+          <div class="export-spinner"></div>
+          <span>打包中...</span>
+        </div>
+        <div v-if="exportState === 'ready'" class="export-ready">
+          <div class="export-file">{{ exportFilename }}</div>
+          <a
+            v-if="exportDownloadUrl"
+            class="download-link"
+            :href="exportDownloadUrl"
+            :download="exportFilename"
+          >
+            如果没有自动下载，点击这里手动下载
+          </a>
+        </div>
+        <div class="modal-actions">
+          <button
+            v-if="exportState === 'ready' && exportDownloadUrl"
+            class="modal-btn confirm"
+            @click="downloadPreparedExport"
+          >
+            再次下载
+          </button>
+          <button
+            class="modal-btn cancel"
+            :disabled="exportState === 'packaging'"
+            @click="closeExportModal"
+          >
+            {{ exportState === 'packaging' ? '打包中...' : '关闭' }}
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { Chart, registerables } from 'chart.js'
 import { adminAPI, configAPI, promptAPI, settingsAPI } from '../api'
 import { toast, confirm } from '../utils/toast'
@@ -1385,6 +1440,12 @@ const checkinThreshold = ref(2)
 // 用户多选
 const selectedUserIds = ref(new Set())
 const selectAllCheckbox = ref(null)
+const showExportModal = ref(false)
+const exportState = ref('idle')
+const exportFilename = ref('')
+const exportDownloadUrl = ref('')
+const exportTargetCount = ref(0)
+const exportErrorMessage = ref('')
 
 // 用户详情弹窗
 const showUserModal = ref(false)
@@ -1551,6 +1612,56 @@ const getLocalDateStamp = () => {
   return getShanghaiDateStamp()
 }
 
+const revokeExportUrl = () => {
+  if (exportDownloadUrl.value) {
+    URL.revokeObjectURL(exportDownloadUrl.value)
+    exportDownloadUrl.value = ''
+  }
+}
+
+const parseDownloadFilename = (headers = {}) => {
+  const disposition = headers['content-disposition'] || headers['Content-Disposition'] || ''
+  const match = disposition.match(/filename=\"?([^\";]+)\"?/)
+  if (match?.[1]) {
+    return decodeURIComponent(match[1])
+  }
+  return `用户全量原始数据_${getLocalDateStamp()}.zip`
+}
+
+const triggerBrowserDownload = () => {
+  if (!exportDownloadUrl.value) return
+  const a = document.createElement('a')
+  a.href = exportDownloadUrl.value
+  a.download = exportFilename.value || `用户全量原始数据_${getLocalDateStamp()}.zip`
+  a.click()
+}
+
+const closeExportModal = () => {
+  if (exportState.value === 'packaging') return
+  showExportModal.value = false
+  exportState.value = 'idle'
+  exportFilename.value = ''
+  exportTargetCount.value = 0
+  exportErrorMessage.value = ''
+  revokeExportUrl()
+}
+
+const downloadPreparedExport = () => {
+  triggerBrowserDownload()
+}
+
+const readExportErrorMessage = async (err) => {
+  const blob = err?.response?.data
+  if (blob instanceof Blob) {
+    try {
+      const text = await blob.text()
+      const data = JSON.parse(text)
+      if (data?.detail) return data.detail
+    } catch {}
+  }
+  return err?.response?.data?.detail || '批量导出失败'
+}
+
 // 多选操作
 const toggleSelectUser = (userId) => {
   const s = new Set(selectedUserIds.value)
@@ -1570,20 +1681,25 @@ const toggleSelectAll = (e) => {
 const exportSelectedUsers = async () => {
   if (selectedUserIds.value.size === 0) return
   const ids = [...selectedUserIds.value]
-  toast.success(`正在导出 ${ids.length} 位用户数据...`)
+  revokeExportUrl()
+  exportTargetCount.value = ids.length
+  exportFilename.value = ''
+  exportErrorMessage.value = ''
+  exportState.value = 'packaging'
+  showExportModal.value = true
   try {
-    const res = await adminAPI.exportUsers(ids)
-    const blob = new Blob([JSON.stringify(res, null, 2)], { type: 'application/json;charset=utf-8' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `用户全量原始数据_${getLocalDateStamp()}.json`
-    a.click()
-    URL.revokeObjectURL(url)
-    toast.success(`已导出 ${ids.length} 位用户的全量原始数据快照`)
+    const res = await adminAPI.exportUsersZip(ids)
+    const blob = new Blob([res.data], { type: 'application/zip' })
+    exportDownloadUrl.value = URL.createObjectURL(blob)
+    exportFilename.value = parseDownloadFilename(res.headers)
+    exportState.value = 'ready'
+    triggerBrowserDownload()
+    toast.success(`已打包 ${ids.length} 位用户的数据`)
   } catch (err) {
     console.error('批量导出失败:', err)
-    toast.error(err.response?.data?.detail || '批量导出失败')
+    exportState.value = 'error'
+    exportErrorMessage.value = await readExportErrorMessage(err)
+    toast.error(exportErrorMessage.value)
   }
 }
 
@@ -2435,6 +2551,10 @@ onMounted(async () => {
   loadPromptStats()
   loadCheckinSettings()
 })
+
+onUnmounted(() => {
+  revokeExportUrl()
+})
 </script>
 
 <style scoped>
@@ -3198,6 +3318,37 @@ onMounted(async () => {
   color: #ffd700;
 }
 
+.modal-icon {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: 0.75rem;
+  font-size: 1rem;
+  font-weight: 700;
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+}
+
+.modal-icon.success {
+  background: rgba(16, 185, 129, 0.18);
+  color: #34d399;
+}
+
+.modal-icon.danger {
+  background: rgba(239, 68, 68, 0.18);
+  color: #f87171;
+}
+
+.modal-message {
+  margin: 0;
+  padding: 0 1.5rem;
+  color: rgba(255, 255, 255, 0.78);
+  line-height: 1.7;
+}
+
 .close-btn {
   background: transparent;
   border: none;
@@ -3255,6 +3406,59 @@ onMounted(async () => {
   background: rgba(239, 68, 68, 0.2);
   color: #ef4444;
   border-color: rgba(239, 68, 68, 0.3);
+}
+
+.export-modal {
+  max-width: 560px;
+  max-height: none;
+}
+
+.export-modal .modal-header {
+  justify-content: flex-start;
+}
+
+.export-progress,
+.export-ready {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.9rem;
+  padding: 0.5rem 0 1rem;
+}
+
+.export-progress {
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.export-spinner {
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  border: 4px solid rgba(255, 255, 255, 0.12);
+  border-top-color: #ffd700;
+  animation: exportSpin 0.85s linear infinite;
+}
+
+.export-file {
+  width: 100%;
+  padding: 0.9rem 1rem;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: #fff;
+  font-size: 0.92rem;
+  word-break: break-all;
+}
+
+.download-link {
+  color: #ffd700;
+  text-decoration: underline;
+  font-size: 0.92rem;
+}
+
+@keyframes exportSpin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
 .mono-cell {
