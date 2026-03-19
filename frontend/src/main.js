@@ -9,19 +9,17 @@ import Register from './pages/Register.vue'
 import Chat from './pages/Chat.vue'
 import Settings from './pages/Settings.vue'
 import Admin from './pages/Admin.vue'
-import ExperimentStart from './pages/ExperimentStart.vue'
-import ExperimentEnd from './pages/ExperimentEnd.vue'
 
 // 路由配置
 const routes = [
-  { path: '/', redirect: '/experiment/start' },
+  { path: '/', redirect: '/chat' },
   { path: '/login', component: Login },
   { path: '/register', component: Register },
   { path: '/chat', component: Chat, meta: { requiresAuth: true } },
   { path: '/settings', component: Settings, meta: { requiresAuth: true } },
   { path: '/admin', component: Admin, meta: { requiresAuth: true, requiresAdmin: true } },
-  { path: '/experiment/start', component: ExperimentStart, meta: { requiresAuth: true } },
-  { path: '/experiment/end', component: ExperimentEnd, meta: { requiresAuth: true } }
+  { path: '/experiment/start', redirect: '/chat' },
+  { path: '/experiment/end', redirect: '/chat' },
 ]
 
 const router = createRouter({
@@ -32,12 +30,12 @@ const router = createRouter({
 // 路由守卫
 router.beforeEach((to, from, next) => {
   const token = localStorage.getItem('token')
-  
+
   if (to.meta.requiresAuth && !token) {
-    next('/login')
-  } else {
-    next()
+    return next('/login')
   }
+
+  next()
 })
 
 const app = createApp(App)

@@ -39,10 +39,66 @@ class AIService:
         self.config = self._load_config()
         self.context_config = self._load_context_config()
 
+    def refresh_config(self) -> dict:
+        """每次请求前重新加载 API 配置，确保管理台修改立即生效。"""
+        self.config = self._load_config()
+        return self.config
+
     def refresh_context_config(self) -> dict:
         """每次请求前重新加载上下文配置，确保管理台修改立即生效。"""
         self.context_config = self._load_context_config()
         return self.context_config
+
+    def _summarize_outbound_messages(self, messages: List[Dict[str, Any]]) -> Dict[str, Any]:
+        summary_messages: List[Dict[str, Any]] = []
+        for idx, msg in enumerate(messages):
+            content = msg.get("content")
+            item: Dict[str, Any] = {
+                "index": idx,
+                "role": msg.get("role"),
+            }
+            if isinstance(content, str):
+                item["text_len"] = len(content)
+                item["has_image"] = False
+            elif isinstance(content, list):
+                text_len = 0
+                image_count = 0
+                image_mimes: List[str] = []
+                image_b64_lens: List[int] = []
+                for part in content:
+                    if not isinstance(part, dict):
+                        continue
+                    if part.get("type") == "text":
+                        text_len += len(str(part.get("text") or ""))
+                    elif part.get("type") == "image_url":
+                        image_count += 1
+                        img_url = ((part.get("image_url") or {}).get("url") or "")
+                        if isinstance(img_url, str) and img_url.startswith("data:"):
+                            try:
+                                header, b64 = img_url.split(",", 1)
+                                mime = header[5:].split(";", 1)[0].strip() if header.startswith("data:") else "unknown"
+                            except Exception:
+                                mime, b64 = "unknown", ""
+                            image_mimes.append(mime or "unknown")
+                            image_b64_lens.append(len(b64 or ""))
+                        else:
+                            image_mimes.append("remote_url")
+                item["text_len"] = text_len
+                item["has_image"] = image_count > 0
+                item["image_count"] = image_count
+                if image_mimes:
+                    item["image_mimes"] = image_mimes
+                if image_b64_lens:
+                    item["image_b64_lens"] = image_b64_lens
+            else:
+                item["text_len"] = len(str(content or ""))
+                item["has_image"] = False
+            summary_messages.append(item)
+
+        return {
+            "message_count": len(messages),
+            "messages": summary_messages,
+        }
 
     def _build_v2_response_schema(self, for_gemini: bool = False) -> Dict[str, Any]:
         schema: Dict[str, Any] = {
@@ -535,6 +591,93 @@ class AIService:
             s = str(content).strip("\n")
             return [{"text": s}] if s else []
 
+        def _summarize_openai_messages_for_log(msgs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+            summary: List[Dict[str, Any]] = []
+            for idx, msg in enumerate(msgs):
+                item: Dict[str, Any] = {
+                    "index": idx,
+                    "role": msg.get("role"),
+                    "content_type": type(msg.get("content")).__name__,
+                }
+                content = msg.get("content")
+                if isinstance(content, str):
+                    item["text_len"] = len(content)
+                    item["has_image"] = False
+                elif isinstance(content, list):
+                    text_len = 0
+                    image_count = 0
+                    image_mimes: List[str] = []
+                    image_b64_lens: List[int] = []
+                    for part in content:
+                        if not isinstance(part, dict):
+                            continue
+                        if part.get("type") == "text":
+                            text_len += len(str(part.get("text") or ""))
+                        elif part.get("type") == "image_url":
+                            image_count += 1
+                            img_url = ((part.get("image_url") or {}).get("url") or "")
+                            if isinstance(img_url, str) and img_url.startswith("data:"):
+                                mime, b64 = _parse_data_url(img_url)
+                                image_mimes.append(mime or "unknown")
+                                image_b64_lens.append(len(b64 or ""))
+                            else:
+                                image_mimes.append("remote_url")
+                    item["text_len"] = text_len
+                    item["has_image"] = image_count > 0
+                    item["image_count"] = image_count
+                    if image_mimes:
+                        item["image_mimes"] = image_mimes
+                    if image_b64_lens:
+                        item["image_b64_lens"] = image_b64_lens
+                else:
+                    item["text_len"] = len(str(content or ""))
+                    item["has_image"] = False
+                summary.append(item)
+            return summary
+
+        def _summarize_gemini_contents_for_log(contents: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+            summary: List[Dict[str, Any]] = []
+            for idx, msg in enumerate(contents):
+                parts = msg.get("parts") if isinstance(msg, dict) else []
+                text_len = 0
+                image_count = 0
+                image_mimes: List[str] = []
+                image_b64_lens: List[int] = []
+                if isinstance(parts, list):
+                    for part in parts:
+                        if not isinstance(part, dict):
+                            continue
+                        if "text" in part:
+                            text_len += len(str(part.get("text") or ""))
+                        inline_data = part.get("inlineData") or {}
+                        if isinstance(inline_data, dict) and inline_data:
+                            image_count += 1
+                            image_mimes.append(str(inline_data.get("mimeType") or "unknown"))
+                            image_b64_lens.append(len(str(inline_data.get("data") or "")))
+                item: Dict[str, Any] = {
+                    "index": idx,
+                    "role": msg.get("role") if isinstance(msg, dict) else None,
+                    "text_len": text_len,
+                    "has_image": image_count > 0,
+                    "image_count": image_count,
+                }
+                if image_mimes:
+                    item["image_mimes"] = image_mimes
+                if image_b64_lens:
+                    item["image_b64_lens"] = image_b64_lens
+                summary.append(item)
+            return summary
+
+        def _log_outbound_request(transport: str, payload_summary: Dict[str, Any]) -> None:
+            log_payload = {
+                "transport": transport,
+                "base_url": base_url,
+                "model": model,
+                "force_json": force_json,
+                **payload_summary,
+            }
+            print("[AI DEBUG] outbound_request=" + json.dumps(log_payload, ensure_ascii=False))
+
         async def _post_json(url: str, headers: Dict[str, str], payload: Dict[str, Any]) -> httpx.Response:
             async with httpx.AsyncClient(timeout=120.0) as client:
                 request_coro = client.post(url, headers=headers, json=payload)
@@ -598,6 +741,14 @@ class AIService:
 
             last_error: Optional[Exception] = None
             for payload in payloads:
+                _log_outbound_request(
+                    "openai_chat_completions",
+                    {
+                        "url": url,
+                        "message_count": len(payload.get("messages") or []),
+                        "messages": _summarize_openai_messages_for_log(payload.get("messages") or []),
+                    },
+                )
                 resp = await _post_json(url, headers, payload)
                 upstream_request_id = resp.headers.get("X-Oneapi-Request-Id") or resp.headers.get("X-Request-Id")
                 if resp.status_code == 404:
@@ -658,6 +809,15 @@ class AIService:
                 payload["generationConfig"]["responseMimeType"] = response_mime_type or "application/json"
                 payload["generationConfig"]["responseSchema"] = response_schema
 
+            _log_outbound_request(
+                "gemini_generate_content",
+                {
+                    "url": url,
+                    "system_text_len": len(system_text),
+                    "message_count": len(contents),
+                    "messages": _summarize_gemini_contents_for_log(contents),
+                },
+            )
             resp = await _post_json(url, headers, payload)
             upstream_request_id = resp.headers.get("X-Oneapi-Request-Id") or resp.headers.get("X-Request-Id")
             resp.raise_for_status()
@@ -739,6 +899,7 @@ class AIService:
 
     async def compress_memory(self, user_id: int, limit: int = 120) -> str:
         """手动触发压缩记忆"""
+        self.refresh_config()
         history_items = self.storage.get_chat_history(user_id=user_id, limit=limit)
         messages = []
         for item in history_items:
@@ -758,6 +919,8 @@ class AIService:
         """
         if not messages:
             return ""
+
+        self.refresh_config()
         
         # 使用MemoryService读取现有记忆
         existing_memory = self.memory_service.read_ltm_text(user_id)
@@ -807,7 +970,7 @@ class AIService:
                 {"role": "user", "content": compress_prompt}
             ]
             
-            result = await self._call_api(self.config["primary"], messages_for_api)
+            result = await self._call_api_with_fallback(messages_for_api)
             compressed_memory = result["content"]
             
             # 使用MemoryService保存结构化LTM（自动版本管理）
@@ -863,6 +1026,7 @@ class AIService:
         if cancel_event and cancel_event.is_set():
             raise asyncio.CancelledError("聊天请求已被新的消息中断")
 
+        self.refresh_config()
         self.refresh_context_config()
         
         # 1. 获取实验条件和加载对应提示词
@@ -891,12 +1055,36 @@ class AIService:
                 break
         
         # 记录请求日志
+        exp_state = self.storage.get_user_experiment_state(user_id)
+        context_summary = {
+            "input_message_count": len(messages),
+            "api_message_count": len(api_messages),
+            "user_message_count": sum(1 for m in messages if m.get("role") == "user"),
+            "assistant_message_count": sum(1 for m in messages if m.get("role") == "assistant"),
+            "image_message_count": sum(1 for m in messages if m.get("image")),
+            "ltm_length": len(ltm_summary or ""),
+            "system_prompt_length": len(system_prompt or ""),
+        }
+        outbound_summary = self._summarize_outbound_messages(api_messages)
+
         request_id = self.chat_logger.log_request(
             user_id=user_id,
             preset=preset.to_dict(),
             condition=condition,
             user_message=user_msg,
             context_message_count=len(api_messages),
+            state_snapshot={
+                "current_round_count": exp_state.get("current_round_count", 0),
+                "weekly_checkin_count": exp_state.get("weekly_checkin_count", 0),
+                "weekly_survey_popup_shown": exp_state.get("weekly_survey_popup_shown", False),
+                "current_week_key": exp_state.get("current_week_key"),
+                "session_start_time": exp_state.get("session_start_time"),
+                "last_user_message_time": exp_state.get("last_user_message_time"),
+                "last_session_end_time": exp_state.get("last_session_end_time"),
+            },
+            context_summary=context_summary,
+            outbound_summary=outbound_summary,
+            model=self.config.get("primary", {}).get("model"),
         )
         
         import time
@@ -909,44 +1097,70 @@ class AIService:
         attempts = 0
 
         max_attempts = 3
-        while attempts < max_attempts:
-            attempts += 1
-            raw_result = await self._call_api_with_fallback(
-                api_messages,
-                cancel_event,
-                force_json=True,
-                response_schema=schema,
-                response_mime_type="application/json",
-            )
-            raw_content = raw_result.get("content", "") or ""
-
-            parsed = self.response_parser.parse(
-                raw_content,
-                last_relationship_stage=preset.last_relationship_stage,
-            )
-            if parsed.parse_success:
-                break
-
-            if cancel_event and cancel_event.is_set():
-                raise asyncio.CancelledError("聊天请求已被新的消息中断")
-
-            if attempts < max_attempts:
-                repair_prompt = self._build_repair_user_prompt(
-                    original_user_text=user_msg,
-                    bad_text_or_obj=(raw_content[:2000] if raw_content else ""),
-                    error_msg=(parsed.parse_error or "schema validation failed"),
+        try:
+            while attempts < max_attempts:
+                attempts += 1
+                raw_result = await self._call_api_with_fallback(
+                    api_messages,
+                    cancel_event,
+                    force_json=True,
+                    response_schema=schema,
+                    response_mime_type="application/json",
                 )
-                api_messages = [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "system", "content": self._build_v2_output_contract_text()},
-                    {"role": "system", "content": f"【当前状态参数】\n{preset.to_json()}"},
-                ]
-                if ltm_summary:
-                    api_messages.append({"role": "system", "content": f"【关于这位用户的记忆】\n{ltm_summary}"})
-                api_messages.append({"role": "user", "content": repair_prompt})
+                raw_content = raw_result.get("content", "") or ""
+
+                parsed = self.response_parser.parse(
+                    raw_content,
+                    last_relationship_stage=preset.last_relationship_stage,
+                )
+                if parsed.parse_success:
+                    break
+
+                if cancel_event and cancel_event.is_set():
+                    raise asyncio.CancelledError("聊天请求已被新的消息中断")
+
+                if attempts < max_attempts:
+                    repair_prompt = self._build_repair_user_prompt(
+                        original_user_text=user_msg,
+                        bad_text_or_obj=(raw_content[:2000] if raw_content else ""),
+                        error_msg=(parsed.parse_error or "schema validation failed"),
+                    )
+                    api_messages = [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "system", "content": self._build_v2_output_contract_text()},
+                        {"role": "system", "content": f"【当前状态参数】\n{preset.to_json()}"},
+                    ]
+                    if ltm_summary:
+                        api_messages.append({"role": "system", "content": f"【关于这位用户的记忆】\n{ltm_summary}"})
+                    api_messages.append({"role": "user", "content": repair_prompt})
+        except BaseException as exc:
+            latency_ms = int((time.time() - start_time) * 1000)
+            self.chat_logger.log_response(
+                user_id=user_id,
+                request_id=request_id,
+                raw_content=raw_content,
+                parsed_reply=parsed.reply,
+                segments=parsed.segments,
+                did_self_disclosure=parsed.did_self_disclosure,
+                relationship_stage=parsed.relationship_stage_judge,
+                parse_success=False,
+                parse_error=str(exc),
+                latency_ms=latency_ms,
+                model=self.config.get("primary", {}).get("model"),
+                reasoning_content=raw_result.get("reasoning_content", "") or "",
+                upstream_request_id=raw_result.get("upstream_request_id"),
+                attempts=attempts,
+                response_meta={
+                    "condition": condition,
+                    "did_self_disclosure": parsed.did_self_disclosure,
+                    "relationship_stage_judge": parsed.relationship_stage_judge,
+                    "failure_type": exc.__class__.__name__,
+                },
+            )
+            raise
 
         latency_ms = int((time.time() - start_time) * 1000)
-        
+
         # 记录响应日志
         self.chat_logger.log_response(
             user_id=user_id,
@@ -961,6 +1175,13 @@ class AIService:
             latency_ms=latency_ms,
             model=self.config.get("primary", {}).get("model"),
             reasoning_content=raw_result.get("reasoning_content", "") or "",
+            upstream_request_id=raw_result.get("upstream_request_id"),
+            attempts=attempts,
+            response_meta={
+                "condition": condition,
+                "did_self_disclosure": parsed.did_self_disclosure,
+                "relationship_stage_judge": parsed.relationship_stage_judge,
+            },
         )
         
         # 7. 更新会话状态

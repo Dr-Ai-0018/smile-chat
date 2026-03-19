@@ -78,6 +78,156 @@
             </div>
           </div>
         </div>
+        <div class="charts-row">
+          <div class="chart-card">
+            <div class="chart-card-header">
+              <h3>用户消息量</h3>
+              <span>按用户统计</span>
+            </div>
+            <div class="chart-wrap">
+              <canvas ref="barChartRef"></canvas>
+            </div>
+          </div>
+          <div class="chart-card">
+            <div class="chart-card-header">
+              <h3>实验条件分布</h3>
+              <span>none / emotional / factual</span>
+            </div>
+            <div class="chart-wrap">
+              <canvas ref="doughnutChartRef"></canvas>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section v-if="activeTab === 'analytics'" class="panel analytics-panel">
+        <div class="panel-header">
+          <h2>详细统计</h2>
+          <button class="refresh-btn" @click="loadDetailedStats">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="23 4 23 10 17 10"/>
+              <path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/>
+            </svg>
+            刷新
+          </button>
+        </div>
+
+        <div class="stats-grid analytics-overview">
+          <div class="stat-card">
+            <div class="stat-icon">🧾</div>
+            <div class="stat-info">
+              <div class="stat-value">{{ detailedStats.overview?.request_count || 0 }}</div>
+              <div class="stat-label">总请求数</div>
+            </div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon">✅</div>
+            <div class="stat-info">
+              <div class="stat-value">{{ detailedStats.overview?.successful_request_count || 0 }}</div>
+              <div class="stat-label">成功请求</div>
+            </div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon">🔁</div>
+            <div class="stat-info">
+              <div class="stat-value">{{ detailedStats.overview?.effective_dialogue_count || 0 }}</div>
+              <div class="stat-label">有效对话轮次</div>
+            </div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon">🗓️</div>
+            <div class="stat-info">
+              <div class="stat-value">{{ detailedStats.overview?.current_week_checkin_count || 0 }}</div>
+              <div class="stat-label">本周打卡总数</div>
+            </div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon">⚡</div>
+            <div class="stat-info">
+              <div class="stat-value">{{ formatLatency(detailedStats.overview?.avg_latency_ms) }}</div>
+              <div class="stat-label">平均延迟</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="analytics-grid">
+          <div class="analytics-card">
+            <div class="analytics-card-header">
+              <h3>周统计</h3>
+              <span>按周汇总消息、请求、打卡与活跃用户</span>
+            </div>
+            <div class="analytics-table-wrap">
+              <table class="data-table analytics-table">
+                <thead>
+                  <tr>
+                    <th>周</th>
+                    <th>活跃用户</th>
+                    <th>消息</th>
+                    <th>有效对话</th>
+                    <th>请求</th>
+                    <th>成功请求</th>
+                    <th>打卡</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="week in detailedStats.weekly || []" :key="week.week_key">
+                    <td>{{ week.week_key }}</td>
+                    <td>{{ week.active_user_count }}</td>
+                    <td>{{ week.message_count }}</td>
+                    <td>{{ week.effective_dialogue_count }}</td>
+                    <td>{{ week.request_count }}</td>
+                    <td>{{ week.successful_request_count }}</td>
+                    <td>{{ week.checkin_count }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="analytics-card">
+            <div class="analytics-card-header">
+              <h3>用户明细</h3>
+              <span>查看每个人的请求、轮次、打卡与提示事件</span>
+            </div>
+            <div class="analytics-table-wrap">
+              <table class="data-table analytics-table">
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>用户名</th>
+                    <th>条件</th>
+                    <th>消息</th>
+                    <th>有效对话</th>
+                    <th>本周打卡</th>
+                    <th>当前轮次</th>
+                    <th>请求</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="user in detailedStats.users || []" :key="`analytics-${user.user_id}`">
+                    <td>{{ user.user_id }}</td>
+                    <td>{{ user.username }}</td>
+                    <td>{{ formatCondition(user.condition) }}</td>
+                    <td>{{ user.message_count }}</td>
+                    <td>{{ user.effective_dialogue_count }}</td>
+                    <td>{{ user.weekly_checkin_count }}/{{ user.required_weekly_checkins }}</td>
+                    <td>{{ user.current_round_count }}</td>
+                    <td>{{ user.request_count }}</td>
+                    <td>
+                      <button class="action-btn view" @click="viewUserDetail({ id: user.user_id, username: user.username, message_count: user.message_count, created_at: user.created_at, condition: user.condition })" title="查看详情">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                          <circle cx="12" cy="12" r="3"/>
+                        </svg>
+                      </button>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
       </section>
 
       <!-- 用户管理 -->
@@ -88,6 +238,14 @@
             <button class="export-btn" @click="exportIncompleteCheckins" title="导出本周未完成打卡的用户">
               导出未完成打卡
             </button>
+            <button
+              class="bulk-export-btn"
+              :disabled="selectedUserIds.size === 0"
+              @click="exportSelectedUsers"
+              title="导出选中用户的全量原始数据快照"
+            >
+              批量导出 ({{ selectedUserIds.size }})
+            </button>
             <input
               v-model="userSearch"
               type="text"
@@ -97,10 +255,28 @@
           </div>
         </div>
 
+        <!-- 全选行 -->
+        <div class="select-all-row">
+          <label>
+            <input
+              ref="selectAllCheckbox"
+              type="checkbox"
+              :checked="filteredUsers.length > 0 && selectedUserIds.size === filteredUsers.length"
+              @change="toggleSelectAll"
+              class="row-checkbox"
+            />
+            全选当前页 ({{ filteredUsers.length }} 人)
+          </label>
+          <span v-if="selectedUserIds.size > 0" style="font-size:0.82rem;color:rgba(255,255,255,0.55)">
+            已选 {{ selectedUserIds.size }} 人
+          </span>
+        </div>
+
         <div class="users-table-wrapper">
           <table class="data-table">
             <thead>
               <tr>
+                <th style="width:36px"></th>
                 <th>ID</th>
                 <th>用户名</th>
                 <th>实验条件</th>
@@ -111,7 +287,19 @@
               </tr>
             </thead>
             <tbody>
-              <tr v-for="user in filteredUsers" :key="user.id">
+              <tr
+                v-for="user in filteredUsers"
+                :key="user.id"
+                :class="{ 'selected-row': selectedUserIds.has(user.id) }"
+              >
+                <td>
+                  <input
+                    type="checkbox"
+                    :checked="selectedUserIds.has(user.id)"
+                    @change="toggleSelectUser(user.id)"
+                    class="row-checkbox"
+                  />
+                </td>
                 <td class="id-cell">{{ user.id }}</td>
                 <td class="username-cell">
                   <span class="username">{{ user.username }}</span>
@@ -149,10 +337,10 @@
                       <path d="M7 11V7a5 5 0 0110 0v4"/>
                     </svg>
                   </button>
-                  <button 
-                    v-if="user.id !== 1" 
-                    class="action-btn delete" 
-                    @click="deleteUser(user)" 
+                  <button
+                    v-if="user.id !== 1"
+                    class="action-btn delete"
+                    @click="deleteUser(user)"
                     title="删除用户"
                   >
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -338,6 +526,300 @@
               {{ loading ? '保存中...' : '保存配置' }}
             </button>
           </div>
+
+          <div class="config-section">
+            <h3>系统设置</h3>
+            <p class="config-desc">管理邀请码、聊天轮次、打卡阈值与新用户条件分配</p>
+
+            <div class="config-form">
+              <div class="config-row">
+                <label>邀请码注册</label>
+                <input v-model="systemSettings.invite_code_enabled" type="checkbox" class="config-checkbox" />
+                <span class="config-hint">关闭后用户无需邀请码即可注册</span>
+              </div>
+              <div class="config-row">
+                <label>聊天时长限制</label>
+                <input v-model="systemSettings.chat_timer_enabled" type="checkbox" class="config-checkbox" />
+                <span class="config-hint">开启后按分钟限制单日聊天时长</span>
+              </div>
+              <div class="config-row">
+                <label>聊天时长(分钟)</label>
+                <input v-model.number="systemSettings.chat_timer_duration_minutes" type="number" min="1" max="240" />
+                <span class="config-hint">单日聊天时长上限</span>
+              </div>
+              <div class="config-row">
+                <label>记忆压缩阈值</label>
+                <input v-model.number="systemSettings.memory_compress_threshold" type="number" min="0" max="200" />
+                <span class="config-hint">
+                  0 = 动态阈值（高频聊天≤5min: 40条；中频≤30min: 30条；低频: 20条；另外距上次压缩超2小时且新增≥10条也会触发）；
+                  N &gt; 0 = 固定每 N 条新消息压缩一次。压缩时 AI 将近期对话与现有长期记忆合并提炼，写入 ltm/，原始聊天记录不删除。
+                </span>
+              </div>
+              <div class="config-row">
+                <label>最短有效消息</label>
+                <input v-model.number="systemSettings.min_user_message_length" type="number" min="1" max="200" />
+                <span class="config-hint">用户消息达到该长度，AI 成功回复后才计入有效轮次</span>
+              </div>
+              <div class="config-row">
+                <label>轮次超时重置(分钟)</label>
+                <input v-model.number="systemSettings.round_reset_interval_minutes" type="number" min="1" max="10080" />
+                <span class="config-hint">超过该间隔，当前轮次会自动清零并开始新会话</span>
+              </div>
+              <div class="config-row">
+                <label>打卡所需轮次</label>
+                <input v-model.number="systemSettings.min_rounds_for_checkin" type="number" min="1" max="200" />
+                <span class="config-hint">达到该轮次才允许打卡</span>
+              </div>
+              <div class="config-row">
+                <label>打卡冷却(小时)</label>
+                <input v-model.number="systemSettings.checkin_cooldown_hours" type="number" min="0" max="168" />
+                <span class="config-hint">两次打卡的最短间隔</span>
+              </div>
+              <div class="config-row">
+                <label>周末问卷阈值</label>
+                <input v-model.number="systemSettings.min_weekly_checkins_for_survey" type="number" min="0" max="20" />
+                <span class="config-hint">达到该本周打卡次数才触发周末问卷</span>
+              </div>
+            </div>
+
+            <div class="strategy-card">
+              <div class="strategy-header">
+                <h4>实验条件分配</h4>
+                <span>{{ conditionLabel(systemSettings.condition_assignment_mode) }}</span>
+              </div>
+              <div class="strategy-options">
+                <label v-for="option in strategyModeOptions" :key="option.value" class="strategy-option">
+                  <input
+                    type="radio"
+                    name="condition-mode"
+                    :value="option.value"
+                    v-model="systemSettings.condition_assignment_mode"
+                  />
+                  <div>
+                    <strong>{{ option.label }}</strong>
+                    <p>{{ option.desc }}</p>
+                  </div>
+                </label>
+              </div>
+              <div v-if="systemSettings.condition_assignment_mode === 'fixed'" class="fixed-condition-row">
+                <label>固定条件</label>
+                <div class="condition-chip-row">
+                  <button
+                    v-for="option in fixedConditionOptions"
+                    :key="option.value"
+                    type="button"
+                    class="condition-chip"
+                    :class="{ active: systemSettings.fixed_condition === option.value }"
+                    @click="systemSettings.fixed_condition = option.value"
+                  >
+                    {{ option.label }}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <button class="save-btn" @click="saveSystemSettings" :disabled="loading">
+              {{ loading ? '保存中...' : '保存系统设置' }}
+            </button>
+          </div>
+
+          <div class="config-section">
+            <div class="section-headline">
+              <div>
+                <h3>API 通道配置</h3>
+                <p class="config-desc">可视化查看与修改主通道、备份通道、搜索与上下文相关参数</p>
+              </div>
+              <button class="refresh-btn" @click="loadApiConfig">刷新</button>
+            </div>
+
+            <div class="api-config-block">
+              <h4>主通道</h4>
+              <div class="config-form">
+                <div class="config-row">
+                  <label>名称</label>
+                  <input v-model="apiConfig.stored.primary.name" type="text" placeholder="OpenAI / Gemini / 自定义名称" />
+                  <span class="config-hint">若同名 env 覆盖存在，右侧会显示当前生效值</span>
+                </div>
+                <div class="config-row">
+                  <label>Base URL</label>
+                  <input v-model="apiConfig.stored.primary.base_url" type="text" placeholder="https://..." />
+                  <span class="config-hint">{{ formatApiOverrideHint('primary', 'base_url', apiConfig.effective.primary?.base_url) }}</span>
+                </div>
+                <div class="config-row">
+                  <label>模型</label>
+                  <input v-model="apiConfig.stored.primary.model" type="text" placeholder="gpt-4.1-mini / gemini-..." />
+                  <span class="config-hint">{{ formatApiOverrideHint('primary', 'model', apiConfig.effective.primary?.model) }}</span>
+                </div>
+                <div class="config-row">
+                  <label>API Key</label>
+                  <input v-model="apiConfig.stored.primary.api_key" type="password" placeholder="留空表示不修改当前密钥；填写才会更新" />
+                  <span class="config-hint">当前生效密钥：{{ apiConfig.effective.primary?.api_key_masked || '未配置' }}，留空保存不会覆盖旧值</span>
+                </div>
+                <div class="config-row">
+                  <label>名称 Env</label>
+                  <input v-model="apiConfig.stored.primary.name_env" type="text" placeholder="AI_PRIMARY_NAME" />
+                  <span class="config-hint">存在 env 时会覆盖输入框中的名称</span>
+                </div>
+                <div class="config-row">
+                  <label>Base URL Env</label>
+                  <input v-model="apiConfig.stored.primary.base_url_env" type="text" placeholder="AI_PRIMARY_BASE_URL" />
+                  <span class="config-hint">存在 env 时会覆盖 Base URL</span>
+                </div>
+                <div class="config-row">
+                  <label>模型 Env</label>
+                  <input v-model="apiConfig.stored.primary.model_env" type="text" placeholder="AI_PRIMARY_MODEL" />
+                  <span class="config-hint">存在 env 时会覆盖模型</span>
+                </div>
+                <div class="config-row">
+                  <label>Key Env</label>
+                  <input v-model="apiConfig.stored.primary.api_key_env" type="text" placeholder="AI_PRIMARY_KEY" />
+                  <span class="config-hint">存在 env 时会覆盖 API Key</span>
+                </div>
+                <div class="config-row">
+                  <label>协议类型</label>
+                  <select v-model="apiConfig.stored.primary.api_type">
+                    <option value="openai">openai/chat_completions</option>
+                    <option value="gemini">gemini/generateContent</option>
+                  </select>
+                  <span class="config-hint">控制图片与 JSON 输出的上游调用协议</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="api-config-block">
+              <div class="section-headline small">
+                <h4>备份通道</h4>
+                <button class="create-btn" @click="addBackupChannel">新增备份</button>
+              </div>
+              <div v-if="!apiConfig.stored.backup.length" class="empty-inline">当前没有备份通道</div>
+              <div v-for="(backup, index) in apiConfig.stored.backup" :key="`backup-${index}`" class="backup-channel-card">
+                <div class="section-headline small">
+                  <strong>备份通道 {{ index + 1 }}</strong>
+                  <button class="modal-btn danger" @click="removeBackupChannel(index)">删除</button>
+                </div>
+                <div class="config-form">
+                  <div class="config-row">
+                    <label>名称</label>
+                    <input v-model="backup.name" type="text" placeholder="备用模型名称" />
+                    <span class="config-hint">{{ formatApiOverrideHint('backup', 'name', apiConfig.effective.backup?.[index]?.name, index) }}</span>
+                  </div>
+                  <div class="config-row">
+                    <label>Base URL</label>
+                    <input v-model="backup.base_url" type="text" placeholder="https://..." />
+                    <span class="config-hint">{{ formatApiOverrideHint('backup', 'base_url', apiConfig.effective.backup?.[index]?.base_url, index) }}</span>
+                  </div>
+                  <div class="config-row">
+                    <label>模型</label>
+                    <input v-model="backup.model" type="text" placeholder="备用模型" />
+                    <span class="config-hint">{{ formatApiOverrideHint('backup', 'model', apiConfig.effective.backup?.[index]?.model, index) }}</span>
+                  </div>
+                  <div class="config-row">
+                    <label>API Key</label>
+                    <input v-model="backup.api_key" type="password" placeholder="留空表示不修改当前密钥；填写才会更新" />
+                    <span class="config-hint">当前生效密钥：{{ apiConfig.effective.backup?.[index]?.api_key_masked || '未配置' }}，留空保存不会覆盖旧值</span>
+                  </div>
+                  <div class="config-row">
+                    <label>名称 Env</label>
+                    <input v-model="backup.name_env" type="text" placeholder="AI_BACKUP_NAME" />
+                    <span class="config-hint">env 优先</span>
+                  </div>
+                  <div class="config-row">
+                    <label>Base URL Env</label>
+                    <input v-model="backup.base_url_env" type="text" placeholder="AI_BACKUP_BASE_URL" />
+                    <span class="config-hint">env 优先</span>
+                  </div>
+                  <div class="config-row">
+                    <label>模型 Env</label>
+                    <input v-model="backup.model_env" type="text" placeholder="AI_BACKUP_MODEL" />
+                    <span class="config-hint">env 优先</span>
+                  </div>
+                  <div class="config-row">
+                    <label>Key Env</label>
+                    <input v-model="backup.api_key_env" type="text" placeholder="AI_BACKUP_KEY" />
+                    <span class="config-hint">env 优先</span>
+                  </div>
+                  <div class="config-row">
+                    <label>协议类型</label>
+                    <select v-model="backup.api_type">
+                      <option value="openai">openai/chat_completions</option>
+                      <option value="gemini">gemini/generateContent</option>
+                    </select>
+                    <span class="config-hint">备用通道调用协议</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="api-config-block">
+              <h4>运行参数</h4>
+              <div class="config-form">
+                <div class="config-row">
+                  <label>启用搜索</label>
+                  <input v-model="apiConfig.stored.enable_search" type="checkbox" class="config-checkbox" />
+                  <span class="config-hint">是否允许上游 API 使用搜索能力</span>
+                </div>
+                <div class="config-row">
+                  <label>上下文消息上限</label>
+                  <input v-model.number="apiConfig.stored.max_context_messages" type="number" min="1" max="200" />
+                  <span class="config-hint">API 通道配置中的最大上下文消息数</span>
+                </div>
+                <div class="config-row">
+                  <label>图片上下文轮次</label>
+                  <input v-model.number="apiConfig.stored.image_context_rounds" type="number" min="1" max="20" />
+                  <span class="config-hint">会保留最近 N 轮中的图片</span>
+                </div>
+              </div>
+            </div>
+
+            <button class="save-btn" @click="saveApiConfig" :disabled="loading">
+              {{ loading ? '保存中...' : '保存 API 配置' }}
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <section v-if="activeTab === 'sysprompts'" class="panel sysprompts-panel">
+        <div class="panel-header">
+          <h2>系统提示词</h2>
+        </div>
+
+        <div class="sysprompt-layout">
+          <div class="sysprompt-sidebar">
+            <button
+              v-for="prompt in systemPrompts"
+              :key="prompt.condition"
+              class="prompt-tab-btn"
+              :class="{ active: activeSysPrompt === prompt.condition }"
+              @click="activeSysPrompt = prompt.condition"
+            >
+              <span>{{ formatCondition(prompt.condition) }}</span>
+              <small>{{ prompt.lines || 0 }} 行</small>
+            </button>
+          </div>
+
+          <div class="sysprompt-editor-card">
+            <div class="sysprompt-editor-header">
+              <div>
+                <h3>{{ formatCondition(activeSysPrompt) }}</h3>
+                <p>{{ currentSystemPromptMeta?.filename || '' }}</p>
+              </div>
+              <button class="save-btn" @click="saveSysPrompt" :disabled="loading || sysPromptLoading">
+                {{ loading ? '保存中...' : '保存提示词' }}
+              </button>
+            </div>
+
+            <div class="sysprompt-hint">
+              当前新用户分配策略：{{ conditionLabel(systemSettings.condition_assignment_mode) }}
+            </div>
+
+            <textarea
+              v-model="sysPromptContent"
+              class="prompt-textarea"
+              rows="20"
+              :disabled="sysPromptLoading"
+              placeholder="输入系统提示词内容..."
+            ></textarea>
+          </div>
         </div>
       </section>
 
@@ -400,41 +882,177 @@
       <div v-if="showUserModal" class="modal-overlay" @click.self="showUserModal = false">
         <div class="modal user-detail-modal">
           <div class="modal-header">
-            <h3>用户详情 - {{ selectedUser?.username }}</h3>
+            <h3>用户详情</h3>
             <button class="close-btn" @click="showUserModal = false">×</button>
           </div>
           <div class="modal-body">
-            <div class="user-info-grid">
-              <div class="info-item">
-                <span class="info-label">用户ID</span>
-                <span class="info-value">{{ selectedUser?.id }}</span>
-              </div>
-              <div class="info-item">
-                <span class="info-label">用户名</span>
-                <span class="info-value">{{ selectedUser?.username }}</span>
-              </div>
-              <div class="info-item">
-                <span class="info-label">消息数</span>
-                <span class="info-value">{{ selectedUser?.message_count }}</span>
-              </div>
-              <div class="info-item">
-                <span class="info-label">注册时间</span>
-                <span class="info-value">{{ formatDate(selectedUser?.created_at) }}</span>
+            <!-- 用户头像+基本信息 -->
+            <div class="user-detail-hero">
+              <div class="user-avatar-circle">{{ (selectedUser?.username || '?')[0].toUpperCase() }}</div>
+              <div class="user-hero-info">
+                <div class="user-hero-name">
+                  {{ selectedUser?.username }}
+                  <span v-if="selectedUser?.id === 1" class="admin-tag" style="margin-left:6px">管理员</span>
+                </div>
+                <div class="user-hero-meta">
+                  ID #{{ selectedUser?.id }} · 注册于 {{ formatDate(selectedUser?.created_at) }} ·
+                  <span :class="['condition-badge', selectedUser?.condition || 'none']" style="font-size:0.78rem;padding:0.15rem 0.5rem">
+                    {{ formatCondition(userDetail.metrics?.condition || selectedUser?.condition) }}
+                  </span>
+                </div>
               </div>
             </div>
-            
+
+            <!-- 关键指标卡片 -->
+            <div class="user-metrics-grid">
+              <div class="metric-card">
+                <div class="metric-value">{{ userDetail.metrics?.message_count || 0 }}</div>
+                <div class="metric-label">总消息数</div>
+              </div>
+              <div class="metric-card">
+                <div class="metric-value">{{ userDetail.metrics?.effective_dialogue_count || 0 }}</div>
+                <div class="metric-label">有效对话</div>
+              </div>
+              <div class="metric-card">
+                <div class="metric-value">{{ userDetail.metrics?.current_round_count || 0 }}</div>
+                <div class="metric-label">当前轮次</div>
+              </div>
+              <div class="metric-card">
+                <div class="metric-value">{{ userDetail.metrics?.weekly_checkin_count || 0 }}/{{ userDetail.metrics?.required_weekly_checkins || checkinThreshold }}</div>
+                <div class="metric-label">本周打卡</div>
+              </div>
+              <div class="metric-card">
+                <div class="metric-value">{{ userDetail.metrics?.request_count || 0 }}</div>
+                <div class="metric-label">总请求数</div>
+              </div>
+              <div class="metric-card">
+                <div class="metric-value">{{ userDetail.metrics?.successful_request_count || 0 }}</div>
+                <div class="metric-label">成功请求</div>
+              </div>
+              <div class="metric-card">
+                <div class="metric-value">{{ formatLatency(userDetail.metrics?.avg_latency_ms) }}</div>
+                <div class="metric-label">平均延迟</div>
+              </div>
+              <div class="metric-card">
+                <div class="metric-value">{{ userDetail.metrics?.total_checkin_count || 0 }}</div>
+                <div class="metric-label">累计打卡</div>
+              </div>
+            </div>
+
+            <!-- 时间信息 -->
+            <div class="detail-block" style="margin-bottom:1rem">
+              <div class="user-info-grid" style="margin-bottom:0">
+                <div class="info-item">
+                  <span class="info-label">最后用户消息</span>
+                  <span class="info-value">{{ formatDate(userDetail.metrics?.last_user_message_time) || '-' }}</span>
+                </div>
+                <div class="info-item">
+                  <span class="info-label">最后打卡</span>
+                  <span class="info-value">{{ formatDate(userDetail.metrics?.last_checkin_at) || '-' }}</span>
+                </div>
+                <div class="info-item">
+                  <span class="info-label">当前周</span>
+                  <span class="info-value">{{ userDetail.metrics?.current_week_key || '-' }}</span>
+                </div>
+                <div class="info-item">
+                  <span class="info-label">提示事件</span>
+                  <span class="info-value">展示 {{ userDetail.metrics?.prompt_shown_count || 0 }} / 回答 {{ userDetail.metrics?.prompt_answered_count || 0 }}</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="detail-block">
+              <h4>请求日志</h4>
+              <div class="analytics-table-wrap compact">
+                <table class="data-table analytics-table compact">
+                  <thead>
+                    <tr>
+                      <th>时间</th>
+                      <th>请求ID</th>
+                      <th>轮次</th>
+                      <th>本周打卡</th>
+                      <th>图片</th>
+                      <th>延迟</th>
+                      <th>解析</th>
+                      <th>摘要</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="log in userDetail.request_logs || []" :key="`log-${log.request_id}`">
+                      <td>{{ formatTime(log.timestamp) }}</td>
+                      <td class="mono-cell">{{ log.request_id }}</td>
+                      <td>{{ log.state_snapshot?.current_round_count ?? '-' }}</td>
+                      <td>{{ log.state_snapshot?.weekly_checkin_count ?? '-' }}</td>
+                      <td>{{ getOutboundImageCount(log) }}</td>
+                      <td>{{ formatLatency(log.latency_ms) }}</td>
+                      <td>{{ log.parse_success ? '✓' : '✗' }}</td>
+                      <td class="wide-cell">{{ log.parsed_reply_preview || log.request?.user_message_preview || '-' }}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div class="detail-block">
+              <h4>打卡记录</h4>
+              <div class="analytics-table-wrap compact">
+                <table class="data-table analytics-table compact">
+                  <thead>
+                    <tr>
+                      <th>时间</th>
+                      <th>周</th>
+                      <th>打卡时轮次</th>
+                      <th>答案</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="record in userDetail.checkins || []" :key="`checkin-${record.id}`">
+                      <td>{{ formatTime(record.created_at) }}</td>
+                      <td>{{ record.week_key }}</td>
+                      <td>{{ record.round_count_at_checkin }}</td>
+                      <td class="wide-cell">{{ formatCheckinAnswers(record.answers) }}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
             <div class="chat-history-section">
               <h4>最近聊天记录</h4>
               <div class="history-list">
-                <div 
-                  v-for="msg in userHistory" 
-                  :key="msg.id" 
+                <div
+                  v-for="msg in userHistory"
+                  :key="msg.id"
                   :class="['history-msg', msg.role]"
                 >
                   <span class="msg-role">{{ msg.role === 'user' ? '用户' : '启明' }}</span>
                   <span class="msg-content">{{ msg.content?.substring(0, 100) }}{{ msg.content?.length > 100 ? '...' : '' }}</span>
                   <span class="msg-time">{{ formatTime(msg.timestamp) }}</span>
                 </div>
+              </div>
+            </div>
+
+            <div class="detail-block">
+              <h4>提示事件</h4>
+              <div class="analytics-table-wrap compact">
+                <table class="data-table analytics-table compact">
+                  <thead>
+                    <tr>
+                      <th>时间</th>
+                      <th>组ID</th>
+                      <th>类型</th>
+                      <th>聊天快照</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="event in userDetail.prompt_events || []" :key="`prompt-${event.id}`">
+                      <td>{{ formatTime(event.created_at) }}</td>
+                      <td>{{ event.prompt_group_id }}</td>
+                      <td>{{ event.event_type }}</td>
+                      <td>{{ event.chat_count_snapshot }}</td>
+                    </tr>
+                  </tbody>
+                </table>
               </div>
             </div>
           </div>
@@ -479,6 +1097,9 @@
             </template>
           </div>
           <div class="modal-footer">
+            <button class="modal-btn accent" @click="compressUserMemory" :disabled="compressing || memoryLoading">
+              {{ compressing ? '生成中...' : '🧠 生成/压缩记忆' }}
+            </button>
             <button class="modal-btn primary" @click="saveMemoryEdit" :disabled="loading">
               {{ loading ? '保存中...' : '保存记忆' }}
             </button>
@@ -635,52 +1256,109 @@
     <section v-if="activeTab === 'checkin'" class="panel checkin-panel">
       <div class="panel-header">
         <h2>打卡设置</h2>
+        <button class="save-btn" @click="saveCheckinSettings" :disabled="loading" style="margin:0">
+          {{ loading ? '保存中...' : '保存设置' }}
+        </button>
       </div>
-      <div class="config-sections">
-        <div class="config-section">
-          <h3>周末问卷链接</h3>
-          <p class="config-desc">每周打卡达标后，周末上线时自动弹出此链接</p>
-          <div class="config-form">
-            <div class="config-row">
-              <label>问卷链接</label>
-              <input v-model="checkinSettings.weekly_survey_url" type="url" placeholder="https://..." style="flex:1" />
+
+      <div class="checkin-layout">
+        <!-- 左列：题目配置 -->
+        <div class="checkin-col">
+          <div class="checkin-card">
+            <div class="checkin-card-header">
+              <div>
+                <h3>EMA 打卡题目</h3>
+                <p class="config-desc">用户打卡时显示的题目，采用 1~7 李克特量表</p>
+              </div>
+              <button class="create-btn small" @click="addCheckinQuestion">+ 添加</button>
+            </div>
+            <div class="questions-list">
+              <div v-for="(q, i) in checkinSettings.checkin_questions" :key="i" class="question-edit-row">
+                <span class="q-num">{{ i + 1 }}</span>
+                <input
+                  v-model="checkinSettings.checkin_questions[i]"
+                  type="text"
+                  class="q-input"
+                  :placeholder="`题目 ${i + 1}`"
+                />
+                <button
+                  class="q-del-btn"
+                  @click="removeCheckinQuestion(i)"
+                  :disabled="checkinSettings.checkin_questions.length <= 1"
+                  title="删除"
+                >×</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="checkin-card">
+            <h3>周末问卷链接</h3>
+            <p class="config-desc">本周打卡达标后，周末上线时自动弹出此链接（通过通知收件箱推送）</p>
+            <input
+              v-model="checkinSettings.weekly_survey_url"
+              type="url"
+              class="url-input"
+              placeholder="https://..."
+            />
+          </div>
+        </div>
+
+        <!-- 右列：每周清理 -->
+        <div class="checkin-col">
+          <div class="checkin-card cleanup-card">
+            <h3>每周清理</h3>
+            <div class="cleanup-explain">
+              <div class="explain-block">
+                <span class="explain-icon">🔄</span>
+                <div>
+                  <strong>清零当前轮次</strong>
+                  <p>将所有用户的 <code>current_round_count</code> 重置为 0，并更新 <code>current_week_key</code> 为本周。<br/>
+                  <em>不影响</em>落盘的打卡记录（<code>checkin_records.json</code>）和历史消息，仅清除内存中的"本轮计数"临时状态。</p>
+                </div>
+              </div>
+              <div class="explain-block">
+                <span class="explain-icon">🗑️</span>
+                <div>
+                  <strong>轮次 + 打卡都清零</strong>
+                  <p>在清零轮次的基础上，同时将 <code>weekly_checkin_count</code> 和 <code>weekly_survey_popup_shown</code> 重置为 0/false。<br/>
+                  <em>同样不删除</em>落盘的 <code>checkin_records.json</code> 原始数据，只重置统计计数器。</p>
+                </div>
+              </div>
+            </div>
+            <div class="cleanup-actions">
+              <button class="cleanup-btn secondary" @click="runWeeklyCleanup(false)">
+                🔄 仅清零轮次
+              </button>
+              <button class="cleanup-btn danger" @click="runWeeklyCleanup(true)">
+                🗑️ 轮次 + 打卡计数都清零
+              </button>
             </div>
           </div>
         </div>
-
-        <div class="config-section">
-          <h3>打卡题目</h3>
-          <p class="config-desc">用户打卡时显示的滑块题目（1~10分）</p>
-          <div v-for="(q, i) in checkinSettings.checkin_questions" :key="i" class="config-row">
-            <label>题目 {{ i + 1 }}</label>
-            <input v-model="checkinSettings.checkin_questions[i]" type="text" style="flex:1" />
-            <button class="icon-action-btn danger" @click="removeCheckinQuestion(i)" title="删除">×</button>
-          </div>
-          <button class="create-btn" style="margin-top:8px" @click="addCheckinQuestion">+ 添加题目</button>
-        </div>
-
-        <button class="save-btn" @click="saveCheckinSettings" :disabled="loading">
-          {{ loading ? '保存中...' : '保存设置' }}
-        </button>
       </div>
     </section>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch, nextTick } from 'vue'
+import { Chart, registerables } from 'chart.js'
 import { adminAPI, configAPI, promptAPI, settingsAPI } from '../api'
 import { toast, confirm } from '../utils/toast'
 import { formatShanghaiDateTime, formatShanghaiMonthDayTime, getShanghaiDateStamp } from '../utils/datetime'
 
+Chart.register(...registerables)
+
 // 标签页配置
 const tabs = [
   { id: 'dashboard', label: '仪表盘', icon: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg>' },
+  { id: 'analytics', label: '详细统计', icon: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 5-7"/></svg>' },
   { id: 'users', label: '用户管理', icon: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>' },
   { id: 'memory', label: '记忆管理', icon: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/></svg>' },
   { id: 'prompts', label: '提示系统', icon: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/><path d="M8 9h8M8 13h6"/></svg>' },
   { id: 'invites', label: '邀请码', icon: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M7 8h10M7 12h10M7 16h6"/></svg>' },
   { id: 'config', label: '系统配置', icon: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>' },
+  { id: 'sysprompts', label: '系统提示词', icon: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>' },
   { id: 'checkin', label: '打卡设置', icon: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>' }
 ]
 
@@ -689,6 +1367,11 @@ const loading = ref(false)
 
 // 数据
 const stats = ref({})
+const detailedStats = ref({
+  overview: {},
+  weekly: [],
+  users: [],
+})
 const users = ref([])
 const invites = ref([])
 const memories = ref([])
@@ -699,10 +1382,20 @@ const newInvites = ref([])
 const inviteCodeEnabled = ref(true)
 const checkinThreshold = ref(2)
 
+// 用户多选
+const selectedUserIds = ref(new Set())
+const selectAllCheckbox = ref(null)
+
 // 用户详情弹窗
 const showUserModal = ref(false)
 const selectedUser = ref(null)
 const userHistory = ref([])
+const userDetail = ref({
+  metrics: {},
+  request_logs: [],
+  checkins: [],
+  prompt_events: [],
+})
 
 // 记忆编辑弹窗
 const showMemoryModal = ref(false)
@@ -710,6 +1403,7 @@ const editingMemory = ref(null)
 const editingLongTermMemory = ref('')
 const editingMemoryHistory = ref([])
 const memoryLoading = ref(false)
+const compressing = ref(false)
 
 // 配置
 const contextConfig = ref({
@@ -719,6 +1413,65 @@ const contextConfig = ref({
   reserve_tokens: 1000,
   image_rounds: 5
 })
+const systemSettings = ref({
+  invite_code_enabled: true,
+  chat_timer_enabled: false,
+  chat_timer_duration_minutes: 16,
+  memory_compress_threshold: 0,
+  min_user_message_length: 10,
+  round_reset_interval_minutes: 60,
+  min_rounds_for_checkin: 10,
+  checkin_cooldown_hours: 4,
+  min_weekly_checkins_for_survey: 2,
+  condition_assignment_mode: 'modulo',
+  fixed_condition: 'emotional',
+})
+const apiConfig = ref({
+  stored: {
+    primary: {
+      name: '',
+      base_url: '',
+      model: '',
+      api_key: '',
+      name_env: 'AI_PRIMARY_NAME',
+      base_url_env: 'AI_PRIMARY_BASE_URL',
+      model_env: 'AI_PRIMARY_MODEL',
+      api_key_env: 'AI_PRIMARY_KEY',
+      api_type: 'openai',
+      price: '',
+    },
+    backup: [],
+    enable_search: true,
+    max_context_messages: 80,
+    image_context_rounds: 5,
+  },
+  effective: {
+    primary: {},
+    backup: [],
+  },
+  env_overrides: {
+    primary: {},
+    backup: [],
+  },
+})
+const strategyModeOptions = [
+  { value: 'modulo', label: '按用户ID循环', desc: '按 user_id % 3 固定轮转分配三种条件' },
+  { value: 'random', label: '随机分配', desc: '每个新用户随机分到一种实验条件' },
+  { value: 'fixed', label: '固定条件', desc: '所有新用户都使用同一种实验条件' },
+]
+const fixedConditionOptions = [
+  { value: 'emotional', label: '情感表露', desc: '' },
+  { value: 'factual', label: '事实表露', desc: '' },
+  { value: 'none', label: '无表露', desc: '' },
+]
+const systemPrompts = ref([])
+const activeSysPrompt = ref('emotional')
+const sysPromptContent = ref('')
+const sysPromptLoading = ref(false)
+const barChartRef = ref(null)
+const doughnutChartRef = ref(null)
+let barChartInstance = null
+let doughnutChartInstance = null
 
 // 提示系统
 const promptGroups = ref([])
@@ -758,13 +1511,26 @@ const filteredInvites = computed(() => {
   if (inviteFilter.value === 'available') return invites.value.filter(i => !i.used)
   return invites.value.filter(i => i.used)
 })
+const currentSystemPromptMeta = computed(() =>
+  systemPrompts.value.find(item => item.condition === activeSysPrompt.value) || null
+)
 
 // 加载数据
 const loadStats = async () => {
   try {
     stats.value = await adminAPI.getStats()
+    await renderCharts()
   } catch (err) {
     console.error('加载统计失败:', err)
+  }
+}
+
+const loadDetailedStats = async () => {
+  try {
+    detailedStats.value = await adminAPI.getDetailedStats()
+  } catch (err) {
+    console.error('加载详细统计失败:', err)
+    toast.error('加载详细统计失败')
   }
 }
 
@@ -783,6 +1549,42 @@ const loadUsers = async () => {
 
 const getLocalDateStamp = () => {
   return getShanghaiDateStamp()
+}
+
+// 多选操作
+const toggleSelectUser = (userId) => {
+  const s = new Set(selectedUserIds.value)
+  if (s.has(userId)) s.delete(userId)
+  else s.add(userId)
+  selectedUserIds.value = s
+}
+
+const toggleSelectAll = (e) => {
+  if (e.target.checked) {
+    selectedUserIds.value = new Set(filteredUsers.value.map(u => u.id))
+  } else {
+    selectedUserIds.value = new Set()
+  }
+}
+
+const exportSelectedUsers = async () => {
+  if (selectedUserIds.value.size === 0) return
+  const ids = [...selectedUserIds.value]
+  toast.success(`正在导出 ${ids.length} 位用户数据...`)
+  try {
+    const res = await adminAPI.exportUsers(ids)
+    const blob = new Blob([JSON.stringify(res, null, 2)], { type: 'application/json;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `用户全量原始数据_${getLocalDateStamp()}.json`
+    a.click()
+    URL.revokeObjectURL(url)
+    toast.success(`已导出 ${ids.length} 位用户的全量原始数据快照`)
+  } catch (err) {
+    console.error('批量导出失败:', err)
+    toast.error(err.response?.data?.detail || '批量导出失败')
+  }
 }
 
 const exportIncompleteCheckins = async () => {
@@ -832,6 +1634,7 @@ const loadInviteCodeSetting = async () => {
 const toggleInviteCode = async () => {
   try {
     const res = await adminAPI.setInviteCodeSetting(inviteCodeEnabled.value)
+    systemSettings.value.invite_code_enabled = res.invite_code_enabled
     toast.success(res.message)
   } catch (err) {
     console.error('切换邀请码设置失败:', err)
@@ -856,6 +1659,220 @@ const loadContextConfig = async () => {
   } catch (err) {
     console.error('加载配置失败:', err)
   }
+}
+
+const loadApiConfig = async () => {
+  try {
+    apiConfig.value = await configAPI.getApiConfig()
+  } catch (err) {
+    console.error('加载 API 配置失败:', err)
+    toast.error('加载 API 配置失败')
+  }
+}
+
+const loadSystemSettings = async () => {
+  try {
+    const res = await settingsAPI.getAdmin()
+    systemSettings.value = {
+      ...systemSettings.value,
+      ...res,
+    }
+    checkinThreshold.value = Number(systemSettings.value.min_weekly_checkins_for_survey || checkinThreshold.value || 2)
+    inviteCodeEnabled.value = !!systemSettings.value.invite_code_enabled
+  } catch (err) {
+    console.error('加载系统设置失败:', err)
+  }
+}
+
+const saveSystemSettings = async () => {
+  loading.value = true
+  try {
+    await settingsAPI.updateAdmin({
+      memory_compress_threshold: Number(systemSettings.value.memory_compress_threshold || 0),
+      min_user_message_length: Number(systemSettings.value.min_user_message_length || 10),
+      round_reset_interval_minutes: Number(systemSettings.value.round_reset_interval_minutes || 60),
+      min_rounds_for_checkin: Number(systemSettings.value.min_rounds_for_checkin || 10),
+      checkin_cooldown_hours: Number(systemSettings.value.checkin_cooldown_hours || 4),
+      min_weekly_checkins_for_survey: Number(systemSettings.value.min_weekly_checkins_for_survey || 2),
+      condition_assignment_mode: systemSettings.value.condition_assignment_mode,
+      fixed_condition: systemSettings.value.fixed_condition,
+      chat_timer_enabled: !!systemSettings.value.chat_timer_enabled,
+      chat_timer_duration_minutes: Number(systemSettings.value.chat_timer_duration_minutes || 16),
+      invite_code_enabled: !!systemSettings.value.invite_code_enabled,
+    })
+    toast.success('系统设置已保存')
+    await loadSystemSettings()
+    await Promise.all([loadUsers(), loadDetailedStats()])
+  } catch (err) {
+    console.error('保存系统设置失败:', err)
+    toast.error('保存系统设置失败')
+  } finally {
+    loading.value = false
+  }
+}
+
+const saveApiConfig = async () => {
+  loading.value = true
+  try {
+    await configAPI.updateApiConfig(apiConfig.value.stored)
+    toast.success('API 配置已保存')
+    await loadApiConfig()
+  } catch (err) {
+    console.error('保存 API 配置失败:', err)
+    toast.error(err.response?.data?.detail || '保存 API 配置失败')
+  } finally {
+    loading.value = false
+  }
+}
+
+const addBackupChannel = () => {
+  apiConfig.value.stored.backup.push({
+    name: '',
+    base_url: '',
+    model: '',
+    api_key: '',
+    name_env: 'AI_BACKUP_NAME',
+    base_url_env: 'AI_BACKUP_BASE_URL',
+    model_env: 'AI_BACKUP_MODEL',
+    api_key_env: 'AI_BACKUP_KEY',
+    api_type: 'openai',
+    price: '',
+  })
+}
+
+const removeBackupChannel = (index) => {
+  apiConfig.value.stored.backup.splice(index, 1)
+}
+
+const loadSystemPrompts = async () => {
+  try {
+    const res = await adminAPI.listSystemPrompts()
+    systemPrompts.value = res.prompts || []
+    await loadSystemPrompt(activeSysPrompt.value)
+  } catch (err) {
+    console.error('加载系统提示词失败:', err)
+    toast.error('加载系统提示词失败')
+  }
+}
+
+const loadSystemPrompt = async (condition = activeSysPrompt.value) => {
+  sysPromptLoading.value = true
+  try {
+    const res = await adminAPI.getSystemPrompt(condition)
+    sysPromptContent.value = res.content || ''
+  } catch (err) {
+    console.error('加载提示词内容失败:', err)
+    toast.error('加载提示词内容失败')
+  } finally {
+    sysPromptLoading.value = false
+  }
+}
+
+const saveSysPrompt = async () => {
+  loading.value = true
+  try {
+    await adminAPI.updateSystemPrompt(activeSysPrompt.value, sysPromptContent.value)
+    toast.success('系统提示词已保存')
+    await loadSystemPrompts()
+  } catch (err) {
+    console.error('保存系统提示词失败:', err)
+    toast.error('保存系统提示词失败')
+  } finally {
+    loading.value = false
+  }
+}
+
+const destroyCharts = () => {
+  if (barChartInstance) {
+    barChartInstance.destroy()
+    barChartInstance = null
+  }
+  if (doughnutChartInstance) {
+    doughnutChartInstance.destroy()
+    doughnutChartInstance = null
+  }
+}
+
+const renderCharts = async () => {
+  if (activeTab.value !== 'dashboard') return
+  await nextTick()
+  if (!barChartRef.value || !doughnutChartRef.value) return
+
+  destroyCharts()
+
+  const perUserMessages = stats.value.per_user_messages || []
+  const conditionDistribution = stats.value.condition_distribution || {}
+
+  barChartInstance = new Chart(barChartRef.value, {
+    type: 'bar',
+    data: {
+      labels: perUserMessages.map(item => item.username || `用户${item.user_id}`),
+      datasets: [
+        {
+          label: '消息数',
+          data: perUserMessages.map(item => item.message_count || 0),
+          backgroundColor: 'rgba(251, 191, 36, 0.72)',
+          borderColor: 'rgba(251, 191, 36, 1)',
+          borderWidth: 1,
+          borderRadius: 8,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: {
+          display: false,
+        },
+      },
+      scales: {
+        x: {
+          ticks: { color: 'rgba(255,255,255,0.78)' },
+          grid: { color: 'rgba(255,255,255,0.08)' },
+        },
+        y: {
+          beginAtZero: true,
+          ticks: { color: 'rgba(255,255,255,0.78)' },
+          grid: { color: 'rgba(255,255,255,0.08)' },
+        },
+      },
+    },
+  })
+
+  doughnutChartInstance = new Chart(doughnutChartRef.value, {
+    type: 'doughnut',
+    data: {
+      labels: ['无表露', '情感表露', '事实表露'],
+      datasets: [
+        {
+          data: [
+            conditionDistribution.none || 0,
+            conditionDistribution.emotional || 0,
+            conditionDistribution.factual || 0,
+          ],
+          backgroundColor: [
+            'rgba(148, 163, 184, 0.85)',
+            'rgba(244, 114, 182, 0.85)',
+            'rgba(96, 165, 250, 0.85)',
+          ],
+          borderColor: 'rgba(255,255,255,0.12)',
+          borderWidth: 1,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: {
+          labels: {
+            color: 'rgba(255,255,255,0.82)',
+          },
+        },
+      },
+    },
+  })
 }
 
 // 操作
@@ -891,10 +1908,23 @@ const viewUserDetail = async (user) => {
   showUserModal.value = true
   
   try {
-    const res = await adminAPI.getUserHistory(user.id, 50)
-    userHistory.value = res.history
+    const res = await adminAPI.getUserDetail(user.id, { log_limit: 120, history_limit: 120 })
+    selectedUser.value = {
+      ...selectedUser.value,
+      ...(res.user || {}),
+      message_count: res.metrics?.message_count ?? selectedUser.value?.message_count,
+      condition: res.metrics?.condition ?? selectedUser.value?.condition,
+    }
+    userHistory.value = res.history || []
+    userDetail.value = {
+      metrics: res.metrics || {},
+      request_logs: res.request_logs || [],
+      checkins: res.checkins || [],
+      prompt_events: res.prompt_events || [],
+    }
   } catch (err) {
     console.error('加载聊天记录失败:', err)
+    toast.error('加载用户详情失败')
   }
 }
 
@@ -948,6 +1978,27 @@ const saveMemoryEdit = async () => {
     toast.error('保存记忆失败')
   } finally {
     loading.value = false
+  }
+}
+
+const compressUserMemory = async () => {
+  if (!editingMemory.value) return
+  compressing.value = true
+  try {
+    const userId = editingMemory.value.user_id || editingMemory.value.id
+    await adminAPI.compressUserMemory(userId)
+    toast.success('记忆压缩成功')
+    await loadAllMemory()
+    if (editingMemory.value) {
+      const res = await adminAPI.getUserMemory(userId)
+      editingLongTermMemory.value = res.memory.long_term || ''
+      editingMemoryHistory.value = res.memory.history_files || []
+    }
+  } catch (err) {
+    console.error('压缩记忆失败:', err)
+    toast.error(err.response?.data?.detail || '压缩记忆失败')
+  } finally {
+    compressing.value = false
   }
 }
 
@@ -1013,6 +2064,7 @@ const deleteUser = async (user) => {
       toast.success('用户已删除')
       await loadUsers()
       await loadStats()
+      await loadDetailedStats()
     } catch (err) {
       toast.error(err.response?.data?.detail || '删除失败')
     }
@@ -1034,6 +2086,7 @@ const clearUserHistoryAction = async () => {
       await adminAPI.clearUserHistory(selectedUser.value.id)
       toast.success('聊天记录已清空')
       userHistory.value = []
+      await Promise.all([loadUsers(), loadStats(), loadDetailedStats()])
     } catch (err) {
       toast.error('清空失败')
     }
@@ -1216,6 +2269,46 @@ const formatCondition = (condition) => {
   return map[condition] || '无表露'
 }
 
+const formatLatency = (value) => {
+  if (value === null || value === undefined || value === '') return '-'
+  const n = Number(value)
+  if (Number.isNaN(n)) return '-'
+  return `${Math.round(n)} ms`
+}
+
+const formatCheckinAnswers = (answers) => {
+  if (!answers || typeof answers !== 'object') return '-'
+  return Object.entries(answers).map(([key, value]) => `${key}:${value}`).join('  ')
+}
+
+const formatApiOverrideHint = (scope, field, effectiveValue, index = 0) => {
+  const source = scope === 'primary'
+    ? apiConfig.value.env_overrides?.primary
+    : apiConfig.value.env_overrides?.backup?.[index]
+  if (source?.[field]) {
+    return `当前由环境变量覆盖，生效值：${effectiveValue || '-'}`
+  }
+  return `当前生效值：${effectiveValue || '-'}`
+}
+
+const getOutboundImageCount = (log) => {
+  const messages = log?.outbound_summary?.messages
+  if (!Array.isArray(messages)) return 0
+  return messages.reduce((sum, item) => sum + Number(item?.image_count || 0), 0)
+}
+
+const conditionLabel = (mode) => {
+  const map = {
+    modulo: '按用户ID循环分配',
+    random: '随机分配',
+    fixed: `固定为${formatCondition(systemSettings.value.fixed_condition)}`,
+    emotional: '情感表露',
+    factual: '事实表露',
+    none: '无表露',
+  }
+  return map[mode] || mode
+}
+
 // ==================== 打卡设置 ====================
 const DEFAULT_CHECKIN_QUESTIONS = [
   '你现在的孤独感如何？',
@@ -1255,6 +2348,7 @@ const saveCheckinSettings = async () => {
       checkin_questions: validQuestions,
     })
     toast.success('打卡设置已保存')
+    await loadCheckinSettings()
   } catch (e) {
     toast.error('保存失败')
   } finally {
@@ -1270,13 +2364,73 @@ const removeCheckinQuestion = (i) => {
   checkinSettings.value.checkin_questions.splice(i, 1)
 }
 
-onMounted(() => {
-  loadStats()
+const runWeeklyCleanup = async (resetCheckins = false) => {
+  const confirmed = await confirm({
+    title: '执行每周清理',
+    message: resetCheckins
+      ? '这会清零所有用户的当前轮次，并同时清零本周打卡统计，确定继续吗？'
+      : '这会清零所有用户的当前轮次，确定继续吗？',
+    type: 'danger',
+    confirmText: '确认执行',
+  })
+  if (!confirmed) return
+
+  try {
+    const res = await adminAPI.triggerWeeklyCleanup(resetCheckins)
+    toast.success(`${res.message}，影响 ${res.updated_users} 位用户`)
+    await Promise.all([loadUsers(), loadDetailedStats(), loadStats()])
+  } catch (err) {
+    console.error('执行每周清理失败:', err)
+    toast.error(err.response?.data?.detail || '执行每周清理失败')
+  }
+}
+
+watch(activeTab, async (tab) => {
+  if (tab === 'dashboard') {
+    await renderCharts()
+  }
+  if (tab === 'analytics') {
+    await loadDetailedStats()
+  }
+  if (tab === 'config') {
+    await loadSystemSettings()
+    await loadApiConfig()
+  }
+  if (tab === 'sysprompts') {
+    await loadSystemSettings()
+    await loadSystemPrompts()
+  }
+  if (tab === 'checkin') {
+    await loadCheckinSettings()
+  }
+  if (tab === 'users') {
+    await loadUsers()
+  }
+})
+
+watch([filteredUsers, selectedUserIds], () => {
+  if (!selectAllCheckbox.value) return
+  const selectedCount = selectedUserIds.value.size
+  const totalCount = filteredUsers.value.length
+  selectAllCheckbox.value.indeterminate = selectedCount > 0 && selectedCount < totalCount
+})
+
+watch(activeSysPrompt, async (condition) => {
+  if (activeTab.value === 'sysprompts') {
+    await loadSystemPrompt(condition)
+  }
+})
+
+onMounted(async () => {
+  await loadStats()
+  await loadDetailedStats()
   loadUsers()
   loadInvites()
   loadInviteCodeSetting()
   loadAllMemory()
   loadContextConfig()
+  loadSystemSettings()
+  loadApiConfig()
   loadPromptGroups()
   loadPromptStats()
   loadCheckinSettings()
@@ -1417,6 +2571,13 @@ onMounted(() => {
   margin: 0;
 }
 
+.panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
 /* Dashboard Stats */
 .stats-grid {
   display: grid;
@@ -1452,6 +2613,10 @@ onMounted(() => {
 .stat-label {
   color: rgba(255, 255, 255, 0.7);
   font-size: 0.9rem;
+}
+
+.users-table-wrapper {
+  overflow-x: auto;
 }
 
 /* Search Input */
@@ -1854,10 +3019,60 @@ onMounted(() => {
   gap: 2rem;
 }
 
+.section-headline {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.section-headline.small {
+  margin-bottom: 0.75rem;
+}
+
 .config-section {
   background: rgba(0, 0, 0, 0.2);
   border-radius: 12px;
   padding: 1.5rem;
+}
+
+.api-config-block,
+.analytics-card,
+.detail-block {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 12px;
+  padding: 1rem;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.detail-block h4 {
+  margin: 0 0 0.75rem;
+  color: #ffd700;
+  font-size: 0.95rem;
+}
+
+.api-config-block + .api-config-block,
+.detail-block + .detail-block {
+  margin-top: 1rem;
+}
+
+.backup-channel-card {
+  margin-top: 0.75rem;
+  padding: 1rem;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.empty-inline {
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.inline-actions {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
 }
 
 .config-section h3 {
@@ -1893,6 +3108,21 @@ onMounted(() => {
   color: #fff;
   padding: 0.6rem;
   border-radius: 8px;
+}
+
+.config-row select,
+.config-row textarea {
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: #fff;
+  padding: 0.6rem;
+  border-radius: 8px;
+}
+
+.config-checkbox {
+  width: 18px;
+  height: 18px;
+  accent-color: #ffd700;
 }
 
 .config-hint {
@@ -2027,6 +3257,16 @@ onMounted(() => {
   border-color: rgba(239, 68, 68, 0.3);
 }
 
+.mono-cell {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.82rem;
+}
+
+.wide-cell {
+  max-width: 320px;
+  word-break: break-word;
+}
+
 /* User Info Grid */
 .user-info-grid {
   display: grid;
@@ -2054,6 +3294,10 @@ onMounted(() => {
 }
 
 /* Chat History */
+.chat-history-section {
+  margin-top: 1rem;
+}
+
 .chat-history-section h4 {
   margin: 0 0 1rem 0;
   color: #ffd700;
@@ -2071,17 +3315,21 @@ onMounted(() => {
   display: flex;
   gap: 0.75rem;
   padding: 0.75rem;
-  background: rgba(0, 0, 0, 0.2);
+  background: rgba(12, 18, 32, 0.42);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(12px);
   border-radius: 8px;
   align-items: flex-start;
 }
 
 .history-msg.assistant {
-  border-left: 3px solid #ffd700;
+  background: rgba(251, 191, 36, 0.08);
+  border-color: rgba(251, 191, 36, 0.18);
 }
 
 .history-msg.user {
-  border-left: 3px solid #3b82f6;
+  background: rgba(59, 130, 246, 0.08);
+  border-color: rgba(59, 130, 246, 0.18);
 }
 
 .msg-role {
@@ -2554,5 +3802,585 @@ onMounted(() => {
 .answer-content {
   color: rgba(255, 255, 255, 0.9);
   font-size: 0.95rem;
+}
+
+.charts-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1.25rem;
+  margin-top: 1.5rem;
+}
+
+.analytics-grid {
+  display: grid;
+  gap: 1rem;
+  margin-top: 1.5rem;
+}
+
+.analytics-card-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: baseline;
+  margin-bottom: 0.75rem;
+}
+
+.analytics-card-header h3 {
+  margin: 0;
+  color: #ffd700;
+}
+
+.analytics-card-header span {
+  color: rgba(255, 255, 255, 0.58);
+  font-size: 0.85rem;
+}
+
+.analytics-table-wrap {
+  overflow: auto;
+}
+
+.analytics-table.compact {
+  font-size: 0.84rem;
+}
+
+.analytics-table-wrap.compact {
+  max-height: 260px;
+}
+
+.chart-card,
+.strategy-card,
+.sysprompt-editor-card {
+  background: rgba(10, 18, 36, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 18px;
+  backdrop-filter: blur(16px);
+}
+
+.chart-card {
+  padding: 1rem 1rem 0.75rem;
+}
+
+.chart-card-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 0.75rem;
+}
+
+.chart-card-header h3,
+.strategy-header h4,
+.sysprompt-editor-header h3 {
+  margin: 0;
+  color: #ffd700;
+}
+
+.chart-card-header span,
+.strategy-header span,
+.sysprompt-editor-header p,
+.sysprompt-hint {
+  color: rgba(255, 255, 255, 0.62);
+  font-size: 0.86rem;
+}
+
+.chart-wrap {
+  position: relative;
+  height: 280px;
+}
+
+.strategy-card {
+  padding: 1rem;
+  margin-bottom: 1rem;
+}
+
+.strategy-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.9rem;
+}
+
+.strategy-options {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.strategy-option {
+  display: flex;
+  gap: 0.75rem;
+  align-items: flex-start;
+  padding: 0.85rem 1rem;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  cursor: pointer;
+}
+
+.strategy-option input {
+  margin-top: 0.2rem;
+  accent-color: #ffd700;
+}
+
+.strategy-option p {
+  margin: 0.2rem 0 0;
+  color: rgba(255, 255, 255, 0.58);
+  font-size: 0.84rem;
+}
+
+.fixed-condition-row {
+  margin-top: 1rem;
+}
+
+.condition-chip-row {
+  display: flex;
+  gap: 0.75rem;
+  margin-top: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.condition-chip {
+  padding: 0.55rem 0.9rem;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.82);
+  cursor: pointer;
+}
+
+.condition-chip.active {
+  background: rgba(251, 191, 36, 0.18);
+  color: #ffd700;
+  border-color: rgba(251, 191, 36, 0.45);
+}
+
+.sysprompt-layout {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  gap: 1rem;
+}
+
+.sysprompt-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.prompt-tab-btn {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 0.9rem 1rem;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.9);
+  cursor: pointer;
+  text-align: left;
+}
+
+.prompt-tab-btn small {
+  color: rgba(255, 255, 255, 0.52);
+}
+
+.prompt-tab-btn.active {
+  background: rgba(251, 191, 36, 0.16);
+  border-color: rgba(251, 191, 36, 0.38);
+  color: #ffd700;
+}
+
+.sysprompt-editor-card {
+  padding: 1rem;
+}
+
+.sysprompt-editor-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: center;
+  margin-bottom: 0.75rem;
+}
+
+.sysprompt-hint {
+  margin-bottom: 0.8rem;
+}
+
+.prompt-textarea {
+  width: 100%;
+  min-height: 420px;
+  padding: 1rem;
+  background: rgba(0, 0, 0, 0.28);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 14px;
+  color: #fff;
+  font-size: 0.95rem;
+  line-height: 1.6;
+  resize: vertical;
+}
+
+.prompt-textarea:focus {
+  outline: none;
+  border-color: rgba(251, 191, 36, 0.5);
+}
+
+.modal-btn.accent {
+  background: rgba(59, 130, 246, 0.18);
+  border-color: rgba(59, 130, 246, 0.4);
+  color: #93c5fd;
+}
+
+.modal-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+@media (max-width: 960px) {
+  .charts-row,
+  .sysprompt-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .sysprompt-sidebar {
+    flex-direction: row;
+    overflow-x: auto;
+  }
+}
+
+/* ==================== 打卡设置页 ==================== */
+.checkin-layout {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+}
+
+@media (max-width: 900px) {
+  .checkin-layout { grid-template-columns: 1fr; }
+}
+
+.checkin-col {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.checkin-card {
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 14px;
+  padding: 1.25rem;
+}
+
+.checkin-card h3 {
+  margin: 0 0 0.4rem;
+  color: #ffd700;
+  font-size: 1rem;
+}
+
+.checkin-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 1rem;
+}
+
+.checkin-card-header > div { flex: 1; }
+
+.create-btn.small {
+  padding: 0.4rem 0.8rem;
+  font-size: 0.82rem;
+  white-space: nowrap;
+}
+
+.questions-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.question-edit-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.q-num {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: rgba(255, 215, 0, 0.15);
+  color: #ffd700;
+  font-size: 0.78rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.q-input {
+  flex: 1;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: #fff;
+  padding: 0.5rem 0.75rem;
+  border-radius: 8px;
+  font-size: 0.9rem;
+}
+
+.q-input:focus {
+  outline: none;
+  border-color: rgba(255, 215, 0, 0.5);
+}
+
+.q-del-btn {
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  border: none;
+  background: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+  cursor: pointer;
+  font-size: 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.q-del-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.url-input {
+  width: 100%;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: #fff;
+  padding: 0.6rem 0.75rem;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  box-sizing: border-box;
+}
+
+.url-input:focus {
+  outline: none;
+  border-color: rgba(255, 215, 0, 0.5);
+}
+
+.cleanup-card { }
+
+.cleanup-explain {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  margin: 1rem 0;
+}
+
+.explain-block {
+  display: flex;
+  gap: 0.75rem;
+  align-items: flex-start;
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 10px;
+  padding: 0.85rem;
+}
+
+.explain-icon {
+  font-size: 1.4rem;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.explain-block strong {
+  display: block;
+  color: #fff;
+  margin-bottom: 0.3rem;
+  font-size: 0.95rem;
+}
+
+.explain-block p {
+  margin: 0;
+  font-size: 0.82rem;
+  color: rgba(255, 255, 255, 0.6);
+  line-height: 1.5;
+}
+
+.explain-block code {
+  background: rgba(255, 215, 0, 0.12);
+  color: #ffd700;
+  padding: 0 4px;
+  border-radius: 3px;
+  font-size: 0.8rem;
+}
+
+.explain-block em {
+  color: rgba(255, 255, 255, 0.8);
+  font-style: normal;
+  font-weight: 600;
+}
+
+.cleanup-actions {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.cleanup-btn {
+  flex: 1;
+  min-width: 140px;
+  padding: 0.7rem 1rem;
+  border-radius: 10px;
+  border: none;
+  font-size: 0.88rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.cleanup-btn.secondary {
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.cleanup-btn.secondary:hover {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.cleanup-btn.danger {
+  background: rgba(239, 68, 68, 0.15);
+  color: #f87171;
+  border: 1px solid rgba(239, 68, 68, 0.25);
+}
+
+.cleanup-btn.danger:hover {
+  background: rgba(239, 68, 68, 0.28);
+}
+
+/* ==================== 用户详情弹窗改进 ==================== */
+.user-detail-modal {
+  max-width: 900px;
+  max-height: 88vh;
+}
+
+.user-detail-hero {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  padding: 1rem 1.25rem;
+  background: rgba(255, 215, 0, 0.06);
+  border-radius: 12px;
+  margin-bottom: 1.25rem;
+  border: 1px solid rgba(255, 215, 0, 0.12);
+}
+
+.user-avatar-circle {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #ffd700, #ffa500);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: #1a1a2e;
+  flex-shrink: 0;
+}
+
+.user-hero-info { flex: 1; }
+
+.user-hero-name {
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: #fff;
+  margin-bottom: 0.2rem;
+}
+
+.user-hero-meta {
+  font-size: 0.82rem;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.user-metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.75rem;
+  margin-bottom: 1.25rem;
+}
+
+@media (max-width: 700px) {
+  .user-metrics-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+.metric-card {
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: 10px;
+  padding: 0.75rem;
+  text-align: center;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.metric-value {
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: #ffd700;
+  line-height: 1;
+  margin-bottom: 0.3rem;
+}
+
+.metric-label {
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+/* 用户多选 */
+.select-all-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem 0;
+  margin-bottom: 0.5rem;
+}
+
+.select-all-row label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  cursor: pointer;
+  font-size: 0.9rem;
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.bulk-export-btn {
+  background: rgba(99, 102, 241, 0.2);
+  border: 1px solid rgba(99, 102, 241, 0.4);
+  color: #a5b4fc;
+  padding: 0.4rem 0.9rem;
+  border-radius: 7px;
+  cursor: pointer;
+  font-size: 0.82rem;
+  transition: background 0.2s;
+}
+
+.bulk-export-btn:hover:not(:disabled) {
+  background: rgba(99, 102, 241, 0.35);
+}
+
+.bulk-export-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.row-checkbox {
+  accent-color: #ffd700;
+  width: 15px;
+  height: 15px;
+  cursor: pointer;
+}
+
+.selected-row {
+  background: rgba(255, 215, 0, 0.06) !important;
 }
 </style>

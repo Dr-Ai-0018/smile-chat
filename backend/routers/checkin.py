@@ -18,7 +18,7 @@ def get_china_now() -> datetime:
 def get_current_week_key() -> str:
     return get_china_now().strftime("%Y-W%W")
 
-# 实验参数
+# 实验参数默认值（可被 settings.json 覆盖）
 MIN_ROUNDS_FOR_CHECKIN = int(os.getenv("MIN_ROUNDS_FOR_CHECKIN", "10"))
 CHECKIN_COOLDOWN_HOURS = int(os.getenv("CHECKIN_COOLDOWN_HOURS", "4"))
 MIN_WEEKLY_CHECKINS_FOR_SURVEY = int(os.getenv("MIN_WEEKLY_CHECKINS_FOR_SURVEY", "2"))
@@ -39,10 +39,21 @@ class CheckinSubmitRequest(BaseModel):
     answers: List[int]
 
 
+def _runtime_setting_int(key: str, default: int) -> int:
+    settings = storage.get_settings()
+    try:
+        value = int(settings.get(key, default))
+        return value
+    except Exception:
+        return default
+
+
 def _can_checkin(state: dict) -> tuple[bool, int]:
     """返回 (can_checkin, cooldown_remaining_seconds)"""
+    min_rounds_for_checkin = _runtime_setting_int("min_rounds_for_checkin", MIN_ROUNDS_FOR_CHECKIN)
+    checkin_cooldown_hours = _runtime_setting_int("checkin_cooldown_hours", CHECKIN_COOLDOWN_HOURS)
     round_count = state.get("current_round_count", 0)
-    if round_count < MIN_ROUNDS_FOR_CHECKIN:
+    if round_count < min_rounds_for_checkin:
         return False, 0
 
     last_checkin_str = state.get("last_checkin_at")
@@ -52,7 +63,7 @@ def _can_checkin(state: dict) -> tuple[bool, int]:
             if last_checkin.tzinfo is None:
                 last_checkin = last_checkin.replace(tzinfo=CHINA_TZ)
             elapsed = (get_china_now() - last_checkin).total_seconds()
-            cooldown_seconds = CHECKIN_COOLDOWN_HOURS * 3600
+            cooldown_seconds = checkin_cooldown_hours * 3600
             if elapsed < cooldown_seconds:
                 return False, int(cooldown_seconds - elapsed)
         except Exception:
@@ -76,7 +87,8 @@ async def get_checkin_status(user_id: int = Depends(get_current_user)):
         "cooldown_remaining_seconds": cooldown,
         "weekly_checkin_count": state.get("weekly_checkin_count", 0),
         "questions": questions,
-        "min_rounds_for_checkin": MIN_ROUNDS_FOR_CHECKIN,
+        "min_rounds_for_checkin": _runtime_setting_int("min_rounds_for_checkin", MIN_ROUNDS_FOR_CHECKIN),
+        "checkin_cooldown_hours": _runtime_setting_int("checkin_cooldown_hours", CHECKIN_COOLDOWN_HOURS),
     }
 
 
@@ -97,8 +109,8 @@ async def submit_checkin(
         raise HTTPException(status_code=400, detail=f"答案数量应为 {len(questions)}")
 
     for v in body.answers:
-        if not (1 <= v <= 10):
-            raise HTTPException(status_code=400, detail="每题分值应在 1~10 之间")
+        if not (1 <= v <= 7):
+            raise HTTPException(status_code=400, detail="每题分值应在 1~7 之间")
 
     now = get_china_now()
     week_key = get_current_week_key()
@@ -132,11 +144,15 @@ async def weekend_survey_check(user_id: int = Depends(get_current_user)):
     if not is_weekend:
         return {"should_popup": False, "notice_id": None, "survey_url": None}
 
+    min_weekly_checkins_for_survey = _runtime_setting_int(
+        "min_weekly_checkins_for_survey",
+        MIN_WEEKLY_CHECKINS_FOR_SURVEY,
+    )
     state = storage.get_user_experiment_state(user_id)
     weekly_count = state.get("weekly_checkin_count", 0)
     already_shown = state.get("weekly_survey_popup_shown", False)
 
-    if weekly_count < MIN_WEEKLY_CHECKINS_FOR_SURVEY or already_shown:
+    if weekly_count < min_weekly_checkins_for_survey or already_shown:
         return {"should_popup": False, "notice_id": None, "survey_url": None}
 
     # 满足条件：写入用户专属 notice（收件箱可回看），标记本周已弹

@@ -114,8 +114,7 @@ const handleRegister = async () => {
       username: response.username
     }))
     
-    // 跳转到实验开始页
-    router.push('/experiment/start')
+    router.push('/chat')
   } catch (err) {
     const detail = err.response?.data?.detail || ''
     if (detail === '用户名已存在') {
