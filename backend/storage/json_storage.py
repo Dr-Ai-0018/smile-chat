@@ -247,9 +247,16 @@ class JsonStorage:
 
             user_id = data["next_id"]
             created_at = get_china_now().isoformat()
-            # 按 user_id % 3 确定性分配实验条件
+            settings = self.get_settings()
             conditions = ["none", "emotional", "factual"]
-            condition = conditions[user_id % 3]
+            mode = settings.get("condition_assignment_mode", "modulo")
+            if mode == "fixed":
+                condition = settings.get("fixed_condition", "emotional")
+            elif mode == "random":
+                import random as _random
+                condition = _random.choice(conditions)
+            else:
+                condition = conditions[user_id % 3]
             
             user = {
                 "id": user_id,
@@ -377,9 +384,16 @@ class JsonStorage:
 
             user_id = users_data["next_id"]
             created_at = get_china_now().isoformat()
-            # 按 user_id % 3 确定性分配实验条件
+            settings = self.get_settings()
             conditions = ["none", "emotional", "factual"]
-            condition = conditions[user_id % 3]
+            mode = settings.get("condition_assignment_mode", "modulo")
+            if mode == "fixed":
+                condition = settings.get("fixed_condition", "emotional")
+            elif mode == "random":
+                import random as _random
+                condition = _random.choice(conditions)
+            else:
+                condition = conditions[user_id % 3]
             user = {
                 "id": user_id,
                 "username": username,
@@ -428,6 +442,21 @@ class JsonStorage:
             self._write_json_atomic_unlocked(self._settings_file, data)
             return data
 
+    def prune_settings_keys(self, keys: List[str]) -> Dict[str, Any]:
+        """Remove deprecated setting keys if they still exist."""
+        with self._lock_paths([self._settings_file]):
+            data = self._read_json_unlocked(self._settings_file, {"invite_code_enabled": True})
+            if not isinstance(data, dict):
+                data = {"invite_code_enabled": True}
+            changed = False
+            for key in keys:
+                if key in data:
+                    data.pop(key, None)
+                    changed = True
+            if changed:
+                self._write_json_atomic_unlocked(self._settings_file, data)
+            return data
+
     def is_invite_code_enabled(self) -> bool:
         """Check if invite code system is enabled"""
         settings = self.get_settings()
@@ -444,9 +473,16 @@ class JsonStorage:
 
             user_id = users_data["next_id"]
             created_at = get_china_now().isoformat()
-            # 按 user_id % 3 确定性分配实验条件
+            settings = self.get_settings()
             conditions = ["none", "emotional", "factual"]
-            condition = conditions[user_id % 3]
+            mode = settings.get("condition_assignment_mode", "modulo")
+            if mode == "fixed":
+                condition = settings.get("fixed_condition", "emotional")
+            elif mode == "random":
+                import random as _random
+                condition = _random.choice(conditions)
+            else:
+                condition = conditions[user_id % 3]
             
             user = {
                 "id": user_id,
@@ -865,6 +901,19 @@ class JsonStorage:
         now = get_china_now()
         return now.strftime("%Y-W%W")
 
+    def _apply_weekly_reset_if_needed_unlocked(self, state: Dict[str, Any], current_week: str) -> bool:
+        """跨周时重置周统计与当前轮次。"""
+        if state.get("current_week_key") == current_week:
+            return False
+
+        state["weekly_checkin_count"] = 0
+        state["weekly_survey_popup_shown"] = False
+        state["current_round_count"] = 0
+        state["session_start_time"] = None
+        state["last_user_message_time"] = None
+        state["current_week_key"] = current_week
+        return True
+
     def get_user_experiment_state(self, user_id: int) -> Dict[str, Any]:
         """读取用户实验状态，自动初始化并重置过期的周计数"""
         path = self._experiment_states_file()
@@ -889,11 +938,7 @@ class JsonStorage:
                 }
                 data["items"].append(state)
                 self._write_json_atomic_unlocked(path, data)
-            elif state.get("current_week_key") != current_week:
-                # 新的一周，重置周计数
-                state["weekly_checkin_count"] = 0
-                state["weekly_survey_popup_shown"] = False
-                state["current_week_key"] = current_week
+            elif self._apply_weekly_reset_if_needed_unlocked(state, current_week):
                 self._write_json_atomic_unlocked(path, data)
             return dict(state)
 
@@ -906,8 +951,8 @@ class JsonStorage:
                 if s.get("user_id") == user_id:
                     state = s
                     break
+            current_week = self._get_current_week_key()
             if state is None:
-                current_week = self._get_current_week_key()
                 state = {
                     "user_id": user_id,
                     "current_round_count": 0,
@@ -919,10 +964,62 @@ class JsonStorage:
                     "current_week_key": current_week,
                 }
                 data["items"].append(state)
+            else:
+                self._apply_weekly_reset_if_needed_unlocked(state, current_week)
             for k, v in updates.items():
                 state[k] = v
             self._write_json_atomic_unlocked(path, data)
             return dict(state)
+
+    def get_all_experiment_states(self) -> List[Dict[str, Any]]:
+        """获取所有实验状态，并在读取时应用跨周重置。"""
+        path = self._experiment_states_file()
+        with self._lock_paths([path]):
+            data = self._read_experiment_states_unlocked()
+            current_week = self._get_current_week_key()
+            changed = False
+            items = data.get("items", [])
+            for state in items:
+                if isinstance(state, dict) and self._apply_weekly_reset_if_needed_unlocked(state, current_week):
+                    changed = True
+            if changed:
+                self._write_json_atomic_unlocked(path, data)
+            return [dict(item) for item in items if isinstance(item, dict)]
+
+    def reset_weekly_experiment_state(
+        self,
+        user_id: Optional[int] = None,
+        *,
+        reset_checkins: bool = False,
+        reset_week_key: bool = False,
+    ) -> int:
+        """
+        手动重置当前轮次/会话状态，可选同时重置本周打卡统计。
+        Returns: 实际更新的用户数
+        """
+        path = self._experiment_states_file()
+        with self._lock_paths([path]):
+            data = self._read_experiment_states_unlocked()
+            current_week = self._get_current_week_key()
+            updated = 0
+            for state in data.get("items", []):
+                if not isinstance(state, dict):
+                    continue
+                if user_id is not None and state.get("user_id") != user_id:
+                    continue
+                state["current_round_count"] = 0
+                state["session_start_time"] = None
+                state["last_user_message_time"] = None
+                if reset_checkins:
+                    state["weekly_checkin_count"] = 0
+                    state["weekly_survey_popup_shown"] = False
+                if reset_week_key:
+                    state["current_week_key"] = current_week
+                updated += 1
+
+            if updated > 0:
+                self._write_json_atomic_unlocked(path, data)
+            return updated
 
     # ==================== Checkin Records ====================
 
@@ -968,3 +1065,10 @@ class JsonStorage:
         if week_key:
             result = [r for r in result if r.get("week_key") == week_key]
         return result
+
+    def get_all_checkin_records(self, week_key: Optional[str] = None) -> List[Dict[str, Any]]:
+        data = self.read_json(self._checkin_records_file(), {"next_id": 1, "items": []})
+        items = data.get("items", [])
+        if week_key:
+            return [r for r in items if r.get("week_key") == week_key]
+        return list(items)

@@ -18,7 +18,7 @@ from storage import JsonStorage
 # 中国时区 UTC+8
 CHINA_TZ = timezone(timedelta(hours=8))
 
-# 实验参数（从环境变量读取，带默认值）
+# 实验参数默认值（可被 settings.json 覆盖）
 MIN_USER_MESSAGE_LENGTH = int(os.getenv("MIN_USER_MESSAGE_LENGTH", "10"))
 ROUND_RESET_INTERVAL_MINUTES = int(os.getenv("ROUND_RESET_INTERVAL_MINUTES", "60"))
 
@@ -37,6 +37,14 @@ MEMORY_DIR = Path(__file__).parent.parent.parent / "memory" / "本体"
 user_activity = {}
 # 记录用户的当前聊天请求，用于新消息到来时主动取消旧请求
 active_request_events = {}
+
+
+def _runtime_setting_int(key: str, default: int) -> int:
+    settings = storage.get_settings()
+    try:
+        return int(settings.get(key, default))
+    except Exception:
+        return default
 
 def register_request(user_id: int) -> asyncio.Event:
     """为用户注册一个新的取消事件，并中断旧请求"""
@@ -259,7 +267,10 @@ async def check_and_compress_memory(user_id: int):
     
     # 情况2：频繁聊天，达到压缩阈值
     # 根据聊天频率动态调整阈值
-    if time_since_last < 300:  # 5分钟内持续聊天
+    manual_threshold = storage.get_settings().get("memory_compress_threshold", 0)
+    if manual_threshold and manual_threshold > 0:
+        compress_threshold = manual_threshold
+    elif time_since_last < 300:  # 5分钟内持续聊天
         compress_threshold = 40  # 高频聊天，40条压缩一次
     elif time_since_last < 1800:  # 30分钟内
         compress_threshold = 30
@@ -323,6 +334,7 @@ def _record_user_msg_time(user_id: int, user_msg_content: str, msg_time: datetim
     """收到用户消息时调用：判断间隔是否超时，超时则重置轮次；不累加轮次。"""
     state = storage.get_user_experiment_state(user_id)
     last_time_str = state.get("last_user_message_time")
+    round_reset_interval_minutes = _runtime_setting_int("round_reset_interval_minutes", ROUND_RESET_INTERVAL_MINUTES)
 
     if last_time_str:
         try:
@@ -330,7 +342,7 @@ def _record_user_msg_time(user_id: int, user_msg_content: str, msg_time: datetim
             if last_time.tzinfo is None:
                 last_time = last_time.replace(tzinfo=CHINA_TZ)
             gap_minutes = (msg_time - last_time).total_seconds() / 60
-            if gap_minutes > ROUND_RESET_INTERVAL_MINUTES:
+            if gap_minutes > round_reset_interval_minutes:
                 # 超时：清零，记录新会话开始时间，但本轮轮次等AI回复后再+1
                 storage.update_user_experiment_state(user_id, {
                     "current_round_count": 0,
@@ -351,7 +363,8 @@ def _record_user_msg_time(user_id: int, user_msg_content: str, msg_time: datetim
 
 def _increment_round_count(user_id: int, user_msg_content: str, msg_time: datetime):
     """AI完整回复成功后调用：轮次 +1。"""
-    if len(user_msg_content.strip()) < MIN_USER_MESSAGE_LENGTH:
+    min_user_message_length = _runtime_setting_int("min_user_message_length", MIN_USER_MESSAGE_LENGTH)
+    if len(user_msg_content.strip()) < min_user_message_length:
         return
     state = storage.get_user_experiment_state(user_id)
     new_count = state.get("current_round_count", 0) + 1

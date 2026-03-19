@@ -1,37 +1,35 @@
 <template>
-  <div class="checkin-overlay" @click.self="$emit('close')">
-    <div class="checkin-dialog">
-      <div class="checkin-header">
-        <span class="checkin-title">每日打卡</span>
-        <button class="close-btn" @click="$emit('close')">×</button>
+  <div class="ema-overlay" @click.self="$emit('close')">
+    <div class="ema-modal">
+      <div class="ema-header">
+        <h2>📝 本次交流反馈</h2>
+        <p>⚠️ 填完以下 {{ questions.length }} 题并提交，即算作本次打卡成功！</p>
       </div>
 
-      <div class="checkin-body">
-        <p class="checkin-desc">请根据你现在的感受，为以下问题打分（1~10）</p>
-
+      <div class="ema-body">
         <div v-for="(q, i) in questions" :key="i" class="question-item">
-          <div class="question-label">
-            <span>{{ q }}</span>
-            <span class="score-badge">{{ answers[i] }}</span>
+          <p class="q-title">{{ i + 1 }}. {{ q }}</p>
+          <div class="scale-anchors">
+            <span>完全不同意 (1)</span>
+            <span>完全同意 (7)</span>
           </div>
-          <input
-            type="range"
-            min="1"
-            max="10"
-            step="1"
-            v-model.number="answers[i]"
-            class="slider"
-          />
-          <div class="slider-labels">
-            <span>1</span>
-            <span>10</span>
+          <div class="scale-options">
+            <label v-for="n in 7" :key="n">
+              <input type="radio" :name="`q${i}`" :value="n" v-model="answers[i]" />
+              <div class="radio-circle" :class="{ selected: answers[i] === n }">{{ n }}</div>
+            </label>
           </div>
         </div>
       </div>
 
-      <div class="checkin-footer">
-        <button class="submit-btn" :disabled="submitting" @click="handleSubmit">
-          {{ submitting ? '提交中...' : '提交打卡' }}
+      <div class="ema-footer">
+        <div v-if="!allAnswered" class="ema-hint">请完成所有题目后提交</div>
+        <button
+          class="submit-btn"
+          :disabled="submitting || !allAnswered"
+          @click="handleSubmit"
+        >
+          {{ submitting ? '提交中...' : '🚀 提交并完成打卡' }}
         </button>
       </div>
     </div>
@@ -39,27 +37,27 @@
 </template>
 
 <script setup>
-import { ref, watch } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { checkinAPI } from '../api/index.js'
 import { toast } from '../utils/toast'
 
 const props = defineProps({
-  questions: {
-    type: Array,
-    default: () => []
-  }
+  questions: { type: Array, default: () => [] }
 })
 
 const emit = defineEmits(['close', 'success'])
 
-const answers = ref(props.questions.map(() => 5))
+const answers = ref(props.questions.map(() => null))
 const submitting = ref(false)
 
 watch(() => props.questions, (qs) => {
-  answers.value = qs.map(() => 5)
+  answers.value = qs.map(() => null)
 }, { immediate: true })
 
+const allAnswered = computed(() => answers.value.every(a => a !== null))
+
 async function handleSubmit() {
+  if (!allAnswered.value) return
   submitting.value = true
   try {
     await checkinAPI.submit(answers.value)
@@ -74,7 +72,7 @@ async function handleSubmit() {
 </script>
 
 <style scoped>
-.checkin-overlay {
+.ema-overlay {
   position: fixed;
   inset: 0;
   background: rgba(0, 0, 0, 0.45);
@@ -82,118 +80,144 @@ async function handleSubmit() {
   align-items: center;
   justify-content: center;
   z-index: 1000;
+  overflow-y: auto;
+  padding: 16px;
 }
 
-.checkin-dialog {
+.ema-modal {
   background: #fff;
+  width: 92%;
+  max-width: 400px;
   border-radius: 16px;
-  width: 90%;
-  max-width: 420px;
-  max-height: 85vh;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15);
+  overflow: hidden;
   display: flex;
   flex-direction: column;
-  box-shadow: 0 8px 32px rgba(0,0,0,0.18);
-  overflow: hidden;
 }
 
-.checkin-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 16px 20px 12px;
-  border-bottom: 1px solid #f0f0f0;
+.ema-header {
+  background: #FACC15;
+  padding: 12px 15px;
+  text-align: center;
 }
 
-.checkin-title {
-  font-size: 16px;
-  font-weight: 600;
+.ema-header h2 {
+  margin: 0;
+  font-size: 18px;
   color: #333;
+  font-weight: 600;
 }
 
-.close-btn {
-  background: none;
-  border: none;
-  font-size: 20px;
-  color: #999;
-  cursor: pointer;
-  line-height: 1;
-  padding: 0 4px;
+.ema-header p {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: #554400;
+  font-weight: bold;
 }
 
-.checkin-body {
-  padding: 16px 20px;
+.ema-body {
+  padding: 12px 16px;
   overflow-y: auto;
-  flex: 1;
-}
-
-.checkin-desc {
-  font-size: 13px;
-  color: #888;
-  margin: 0 0 16px;
+  max-height: 60vh;
 }
 
 .question-item {
-  margin-bottom: 20px;
+  margin-bottom: 12px;
+  border-bottom: 1px dashed #eee;
+  padding-bottom: 8px;
 }
 
-.question-label {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 8px;
-  font-size: 14px;
-  color: #444;
+.question-item:last-child {
+  border-bottom: none;
+  margin-bottom: 0;
 }
 
-.score-badge {
-  background: #e8f4fd;
-  color: #4a9edd;
-  font-weight: 600;
-  font-size: 14px;
-  min-width: 28px;
-  text-align: center;
-  border-radius: 6px;
-  padding: 2px 6px;
+.q-title {
+  font-size: 13.5px;
+  color: #333;
+  margin: 0 0 6px;
+  font-weight: 500;
+  line-height: 1.3;
 }
 
-.slider {
-  width: 100%;
-  accent-color: #4a9edd;
-  cursor: pointer;
-}
-
-.slider-labels {
+.scale-anchors {
   display: flex;
   justify-content: space-between;
   font-size: 11px;
-  color: #bbb;
-  margin-top: 2px;
+  color: #666;
+  margin-bottom: 4px;
 }
 
-.checkin-footer {
-  padding: 12px 20px 16px;
-  border-top: 1px solid #f0f0f0;
+.scale-options {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.scale-options label {
+  position: relative;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.scale-options input[type="radio"] {
+  display: none;
+}
+
+.radio-circle {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: #f5f5f5;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  font-size: 13px;
+  color: #666;
+  transition: all 0.2s ease;
+  border: 1px solid transparent;
+}
+
+.radio-circle.selected {
+  background: #FACC15;
+  color: #000;
+  font-weight: bold;
+  box-shadow: 0 2px 6px rgba(250, 204, 21, 0.4);
+  border: 1px solid #DCA100;
+  transform: scale(1.1);
+}
+
+.ema-footer {
+  padding: 10px 16px 16px;
+}
+
+.ema-hint {
+  text-align: center;
+  font-size: 12px;
+  color: #999;
+  margin-bottom: 8px;
 }
 
 .submit-btn {
   width: 100%;
-  padding: 12px;
-  background: #4a9edd;
-  color: #fff;
+  background: #FACC15;
+  color: #333;
   border: none;
-  border-radius: 10px;
-  font-size: 15px;
-  font-weight: 500;
+  padding: 14px 0;
+  border-radius: 25px;
+  font-size: 16px;
+  font-weight: bold;
   cursor: pointer;
-  transition: opacity 0.2s;
+  transition: background 0.2s;
+  box-shadow: 0 4px 10px rgba(250, 204, 21, 0.3);
+}
+
+.submit-btn:hover:not(:disabled) {
+  background: #EAB308;
 }
 
 .submit-btn:disabled {
-  opacity: 0.6;
+  opacity: 0.5;
   cursor: not-allowed;
-}
-
-.submit-btn:not(:disabled):hover {
-  opacity: 0.88;
 }
 </style>

@@ -78,6 +78,9 @@ export const adminAPI = {
   
   // 清空用户记忆
   clearUserMemory: (userId) => client.delete(`/admin/user/${userId}/memory`),
+
+  // 手动压缩用户记忆
+  compressUserMemory: (userId) => client.post(`/admin/user/${userId}/memory/compress`),
   
   // 获取历史文件内容
   getHistoryFile: (userId, filename) => 
@@ -88,6 +91,15 @@ export const adminAPI = {
   
   // 获取系统统计
   getStats: () => client.get('/admin/stats'),
+  getDetailedStats: () => client.get('/admin/stats/detailed'),
+  getUserDetail: (userId, params = {}) => {
+    const query = new URLSearchParams()
+    if (params.log_limit) query.set('log_limit', params.log_limit)
+    if (params.history_limit) query.set('history_limit', params.history_limit)
+    const suffix = query.toString() ? `?${query.toString()}` : ''
+    return client.get(`/admin/user/${userId}/detail${suffix}`)
+  },
+  exportUsers: (userIds) => client.post('/admin/users/export', { user_ids: userIds }),
   
   // 获取邀请码开关状态
   getInviteCodeSetting: () => client.get('/admin/settings/invite_code'),
@@ -98,6 +110,14 @@ export const adminAPI = {
 
   // 获取本周未完成打卡的用户
   getIncompleteCheckins: () => client.get('/admin/checkin/incomplete'),
+  triggerWeeklyCleanup: (reset_checkins = false) =>
+    client.post('/admin/checkin/weekly-cleanup', { reset_checkins }),
+
+  // 系统提示词管理
+  listSystemPrompts: () => client.get('/admin/system-prompts'),
+  getSystemPrompt: (condition) => client.get(`/admin/system-prompts/${condition}`),
+  updateSystemPrompt: (condition, content) =>
+    client.put(`/admin/system-prompts/${condition}`, { content }),
 }
 
 export const configAPI = {
@@ -108,7 +128,10 @@ export const configAPI = {
   updateContextConfig: (config) => client.post('/config/context', config),
   
   // 获取API配置
-  getApiConfig: () => client.get('/config/api')
+  getApiConfig: () => client.get('/config/api'),
+
+  // 更新API配置
+  updateApiConfig: (config) => client.put('/config/api', config)
 }
 
 export const promptAPI = {
@@ -189,7 +212,6 @@ export const checkinAPI = {
 }
 
 export const settingsAPI = {
-  getPublic: () => client.get('/public/settings'),
   getAdmin: () => client.get('/admin/settings'),
   updateAdmin: (data) => client.put('/admin/settings', data),
 }
