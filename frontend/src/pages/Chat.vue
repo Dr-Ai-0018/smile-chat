@@ -200,7 +200,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, nextTick, computed, onUnmounted, onActivated } from 'vue'
+import { ref, onMounted, nextTick, computed, onUnmounted, onActivated, onDeactivated } from 'vue'
 import { useRouter } from 'vue-router'
 import { chatAPI, userAPI, promptAPI, checkinAPI, noticeAPI } from '../api'
 import { marked } from 'marked'
@@ -260,6 +260,7 @@ const inboxNotices = ref([])
 const unreadNoticeCount = computed(() =>
   inboxNotices.value.filter(n => !n.read_at).length
 )
+let globalListenersAttached = false
 
 const isPageVisible = () => {
   if (typeof document === 'undefined') return true
@@ -837,6 +838,20 @@ const handleStorageSync = (event) => {
   } catch {}
 }
 
+const attachGlobalListeners = () => {
+  if (globalListenersAttached) return
+  document.addEventListener('visibilitychange', handleVisibilityChange)
+  window.addEventListener('storage', handleStorageSync)
+  globalListenersAttached = true
+}
+
+const detachGlobalListeners = () => {
+  if (!globalListenersAttached) return
+  document.removeEventListener('visibilitychange', handleVisibilityChange)
+  window.removeEventListener('storage', handleStorageSync)
+  globalListenersAttached = false
+}
+
 onMounted(async () => {
   // 并行加载历史和同步头像
   await Promise.all([loadHistory(), syncUserAvatar()])
@@ -844,15 +859,19 @@ onMounted(async () => {
   await Promise.all([refreshCheckinStatus(), loadPendingNotices(), loadInbox()])
   // 周末问卷检查
   checkWeekendSurvey()
-  document.addEventListener('visibilitychange', handleVisibilityChange)
-  window.addEventListener('storage', handleStorageSync)
+  attachGlobalListeners()
 })
 
 onActivated(() => {
+  attachGlobalListeners()
   scrollToBottom()
   if (isPageVisible()) {
     handleVisibilityChange()
   }
+})
+
+onDeactivated(() => {
+  detachGlobalListeners()
 })
 
 onUnmounted(() => {
@@ -860,8 +879,7 @@ onUnmounted(() => {
   if (currentAbortController) {
     currentAbortController.abort()
   }
-  document.removeEventListener('visibilitychange', handleVisibilityChange)
-  window.removeEventListener('storage', handleStorageSync)
+  detachGlobalListeners()
 })
 </script>
 

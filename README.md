@@ -85,11 +85,13 @@ npm run dev
 
 前端默认运行在 `http://localhost:5173`。
 
+开发环境默认使用同源 `/api` 地址，并由 Vite 代理到后端 `http://127.0.0.1:8000`，因此本地联调通常不需要额外改 CORS。
+
 ### 3. 生产构建前端
 
 ```bash
 cd frontend
-npm run build
+VITE_API_URL=/api npm run build
 ```
 
 构建产物位于 `frontend/dist/`。
@@ -110,6 +112,43 @@ AI_PRIMARY_KEY=your_api_key
 AI_PRIMARY_BASE_URL=https://api.openai.com/v1
 AI_PRIMARY_MODEL=gpt-4.1-mini
 ```
+
+### 前端 API 地址与本地代理
+
+推荐把前端 API 地址保持为相对路径：
+
+```env
+VITE_API_URL=/api
+```
+
+本地 `npm run dev` 时，Vite 会自动把下面这些路径代理到 `VITE_DEV_PROXY_TARGET`（默认 `http://127.0.0.1:8000`）：
+
+- `/api`
+- `/uploads`
+- `/avatars`
+
+如果你确实要把前端直接指向一个完整后端地址，例如：
+
+```env
+VITE_API_URL=http://localhost:8000/api
+```
+
+那后端必须显式允许这个前端来源跨域。
+
+### CORS / allow 域名
+
+后端 CORS 现在由环境变量控制：
+
+```env
+CORS_ALLOW_ORIGINS=https://chat.example.com,https://api.example.com
+CORS_ALLOW_ORIGIN_REGEX=^https?://(localhost|127\\.0\\.0\\.1)(:\\d+)?$
+```
+
+说明：
+
+- `CORS_ALLOW_ORIGINS` 用于生产域名，多个域名用英文逗号分隔
+- `CORS_ALLOW_ORIGIN_REGEX` 默认放行本地开发常见来源（`localhost` / `127.0.0.1` 任意端口）
+- 批量导出 ZIP 需要浏览器能读到 `Content-Disposition`，后端已经暴露该响应头；如果导出失败，优先检查前端当前来源是否被上面的 CORS 配置允许
 
 ### 重要数据目录
 
@@ -145,6 +184,8 @@ AI_PRIMARY_MODEL=gpt-4.1-mini
 
 - [快速启动](./QUICKSTART.md)
 - [部署说明](./DEPLOYMENT.md)
+- [后端环境变量示例](./backend/.env.example)
+- [前端环境变量示例](./frontend/.env.example)
 
 ## 说明
 

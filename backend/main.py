@@ -23,6 +23,30 @@ from utils.password import hash_password
 from storage import JsonStorage
 
 
+DEFAULT_CORS_ALLOW_ORIGINS = [
+    "https://chat.example.com",
+    "http://chat.example.com",
+    "https://api.example.com",
+    "http://api.example.com",
+]
+DEFAULT_CORS_ALLOW_ORIGIN_REGEX = r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$"
+
+
+def _split_env_list(value: str | None) -> list[str]:
+    if not value:
+        return []
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def _get_cors_options() -> dict:
+    allow_origins = _split_env_list(os.getenv("CORS_ALLOW_ORIGINS")) or DEFAULT_CORS_ALLOW_ORIGINS
+    allow_origin_regex = (os.getenv("CORS_ALLOW_ORIGIN_REGEX") or DEFAULT_CORS_ALLOW_ORIGIN_REGEX).strip() or None
+    return {
+        "allow_origins": allow_origins,
+        "allow_origin_regex": allow_origin_regex,
+    }
+
+
 def _bootstrap_on_empty_data() -> None:
     storage = JsonStorage()
     users = storage.read_users()
@@ -83,17 +107,15 @@ app = FastAPI(
 )
 
 # CORS配置
+cors_options = _get_cors_options()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173", 
-        "http://localhost:3000",
-        "https://api.example.com",
-        "http://api.example.com",
-    ],
+    allow_origins=cors_options["allow_origins"],
+    allow_origin_regex=cors_options["allow_origin_regex"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["Content-Disposition"],
 )
 
 # 注册路由
