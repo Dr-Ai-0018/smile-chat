@@ -791,9 +791,14 @@ const stopCheckinAutoSync = () => {
   }
 }
 
-const openCheckin = () => {
+const openCheckin = async () => {
+  await refreshCheckinStatus()
   if (!canCheckin.value) {
     toast.info('还不能打卡，继续聊天吧～')
+    return
+  }
+  if (!checkinQuestions.value.length) {
+    toast.error('打卡题目加载失败，请稍后重试')
     return
   }
   showCheckinDialog.value = true

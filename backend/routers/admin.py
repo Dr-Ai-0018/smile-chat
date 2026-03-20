@@ -13,6 +13,7 @@ import io
 import re
 import zipfile
 import shutil
+from urllib.parse import quote
 from datetime import datetime, timezone, timedelta
 
 # 中国时区 UTC+8
@@ -44,12 +45,7 @@ session_state = get_session_state()
 
 MEMORY_BASE_PATH = Path(__file__).parent.parent.parent / "memory" / "本体"
 MEMORY_BACKUP_BASE_PATH = Path(__file__).parent.parent.parent / "memory" / "备份" / "用户记忆"
-PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
-CONDITION_FILES = {
-    "emotional": "情感表露.txt",
-    "factual": "事实表露.txt",
-    "none": "无表露.txt",
-}
+CONDITION_FILES = dict(prompt_manager.CONDITION_FILES)
 MIN_USER_MESSAGE_LENGTH = int(os.getenv("MIN_USER_MESSAGE_LENGTH", "10"))
 MIN_WEEKLY_CHECKINS_FOR_SURVEY = int(os.getenv("MIN_WEEKLY_CHECKINS_FOR_SURVEY", "2"))
 
@@ -462,14 +458,23 @@ async def list_invites(
     """获取邀请码列表"""
     invites = storage.read_invites()
     invites.sort(key=lambda x: x.get("created_at") or "", reverse=True)
+    users_by_id = {}
+    for user in storage.read_users():
+        user_id = user.get("id")
+        if isinstance(user_id, int):
+            users_by_id[user_id] = user
 
     formatted = []
     for invite in invites:
+        used_by = invite.get("used_by")
+        used_user = users_by_id.get(used_by) if isinstance(used_by, int) else None
         formatted.append({
             "code": invite.get("code"),
             "used": bool(invite.get("used")),
-            "used_by": invite.get("used_by"),
-            "created_at": invite.get("created_at")
+            "used_by": used_by,
+            "used_username": used_user.get("username") if used_user else None,
+            "used_condition": used_user.get("self_disclosure_condition") if used_user else None,
+            "created_at": invite.get("created_at"),
         })
 
     return {"invites": formatted}
@@ -905,6 +910,7 @@ async def export_users_zip(
     export_items = [_build_user_export_payload(user_id) for user_id in user_ids]
     generated_at = get_china_now().isoformat()
     filename = f"用户全量原始数据_{get_china_now().strftime('%Y-%m-%d_%H-%M-%S')}.zip"
+    ascii_filename = f"user_export_{get_china_now().strftime('%Y-%m-%d_%H-%M-%S')}.zip"
 
     archive_buffer = io.BytesIO()
     used_folder_names = set()
@@ -966,9 +972,10 @@ async def export_users_zip(
                 )
 
     archive_buffer.seek(0)
+    encoded_filename = quote(filename)
     headers = {
-        "Content-Disposition": f'attachment; filename="{filename}"',
-        "X-Export-Filename": filename,
+        "Content-Disposition": f"attachment; filename=\"{ascii_filename}\"; filename*=UTF-8''{encoded_filename}",
+        "X-Export-Filename": ascii_filename,
     }
     return StreamingResponse(archive_buffer, media_type="application/zip", headers=headers)
 
@@ -1080,14 +1087,18 @@ async def list_system_prompts(admin_id: int = Depends(is_admin)):
     """获取三套系统提示词的概览"""
     prompts = []
     for condition, filename in CONDITION_FILES.items():
-        path = PROMPTS_DIR / filename
-        content = path.read_text(encoding="utf-8") if path.exists() else ""
+        active_path = prompt_manager.get_active_prompt_path(condition)
+        source = prompt_manager.get_prompt_source(condition)
+        content = ""
+        if active_path and active_path.exists():
+            content = active_path.read_text(encoding="utf-8")
         prompts.append({
             "condition": condition,
             "filename": filename,
             "size": len(content),
             "lines": len(content.splitlines()) if content else 0,
             "preview": content[:200],
+            "source": source,
         })
     return {"prompts": prompts}
 
@@ -1101,12 +1112,13 @@ async def get_system_prompt_content(
     filename = CONDITION_FILES.get(condition)
     if not filename:
         raise HTTPException(status_code=404, detail="提示词条件不存在")
-    path = PROMPTS_DIR / filename
-    if not path.exists():
+    path = prompt_manager.get_active_prompt_path(condition)
+    if path is None or not path.exists():
         raise HTTPException(status_code=404, detail="提示词文件不存在")
     return {
         "condition": condition,
         "filename": filename,
+        "source": prompt_manager.get_prompt_source(condition),
         "content": path.read_text(encoding="utf-8"),
     }
 
@@ -1121,14 +1133,15 @@ async def update_system_prompt_content(
     filename = CONDITION_FILES.get(condition)
     if not filename:
         raise HTTPException(status_code=404, detail="提示词条件不存在")
-    PROMPTS_DIR.mkdir(parents=True, exist_ok=True)
-    path = PROMPTS_DIR / filename
+    path = prompt_manager.get_prompt_path(condition)
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(request.content or "", encoding="utf-8")
     prompt_manager.reload(condition)
     return {
         "message": "系统提示词已更新",
         "condition": condition,
         "filename": filename,
+        "path": str(path),
     }
 
 

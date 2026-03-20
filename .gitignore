@@ -8,6 +8,11 @@
 !**/.env.example
 backend/.env
 frontend/.env
+backend/prompts.local/
+backend/prompts/情感表露.txt
+backend/prompts/事实表露.txt
+backend/prompts/无表露.txt
+!backend/prompts/*_示例.txt
 
 memory/
 

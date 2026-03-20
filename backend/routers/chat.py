@@ -338,10 +338,7 @@ def _record_user_msg_time(user_id: int, user_msg_content: str, msg_time: datetim
     state = storage.get_user_experiment_state(user_id)
     last_time_str = state.get("last_user_message_time")
     min_rounds_for_checkin = _runtime_setting_int("min_rounds_for_checkin", MIN_ROUNDS_FOR_CHECKIN)
-    pending_expire_hours = _runtime_setting_int(
-        "checkin_pending_expire_hours",
-        _runtime_setting_int("checkin_cooldown_hours", CHECKIN_PENDING_EXPIRE_HOURS),
-    )
+    pending_expire_hours = _runtime_setting_int("checkin_pending_expire_hours", CHECKIN_PENDING_EXPIRE_HOURS)
     pending_expire_minutes = max(1, pending_expire_hours * 60)
     base_reset_minutes = max(1, min(_runtime_setting_int("round_reset_interval_minutes", ROUND_RESET_INTERVAL_MINUTES), 20))
     round_count = int(state.get("current_round_count", 0) or 0)

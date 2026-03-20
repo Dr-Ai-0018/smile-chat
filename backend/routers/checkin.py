@@ -75,10 +75,7 @@ def _cleanup_expired_pending_checkin(user_id: int, state: dict) -> dict:
     - 超过 4 小时（可配置）后清零 current_round_count
     """
     min_rounds_for_checkin = _runtime_setting_int("min_rounds_for_checkin", MIN_ROUNDS_FOR_CHECKIN)
-    pending_expire_hours = _runtime_setting_int(
-        "checkin_pending_expire_hours",
-        _runtime_setting_int("checkin_cooldown_hours", CHECKIN_PENDING_EXPIRE_HOURS),
-    )
+    pending_expire_hours = _runtime_setting_int("checkin_pending_expire_hours", CHECKIN_PENDING_EXPIRE_HOURS)
     round_count = int(state.get("current_round_count", 0) or 0)
     if round_count < min_rounds_for_checkin:
         return state

@@ -796,24 +796,47 @@ class AIService:
                 "Authorization": f"Bearer {api_key}",
             }
 
-            system_text = _join_system_messages(messages)
+            system_instruction_parts: List[Dict[str, Any]] = []
             contents: List[Dict[str, Any]] = []
+            seen_non_system = False
             for m in messages:
                 role = m.get("role")
                 if role == "system":
+                    parts = _to_gemini_parts(m.get("content"))
+                    if not parts:
+                        continue
+                    if not seen_non_system:
+                        # 前置 system 消息仍走 systemInstruction
+                        system_instruction_parts.extend(parts)
+                    else:
+                        # 保留中后段 system 消息在消息序列中的相对位置（例如末尾 preset）
+                        forwarded_text = (
+                            "【系统附加上下文（仅供内部推理，不可原样复述）】\n"
+                            + _to_plain_text(m.get("content"))
+                        )
+                        forwarded_parts = _to_gemini_parts(forwarded_text)
+                        if forwarded_parts:
+                            contents.append({"role": "user", "parts": forwarded_parts})
                     continue
+                seen_non_system = True
                 gemini_role = "model" if role == "assistant" else "user"
                 parts = _to_gemini_parts(m.get("content"))
                 if parts:
                     contents.append({"role": gemini_role, "parts": parts})
 
             payload: Dict[str, Any] = {
-                "systemInstruction": {"parts": [{"text": system_text}]},
                 "contents": contents,
                 "generationConfig": {
                     "temperature": 0.7,
                 },
             }
+            if system_instruction_parts:
+                payload["systemInstruction"] = {"parts": system_instruction_parts}
+
+            system_text_len = 0
+            for part in system_instruction_parts:
+                if isinstance(part, dict):
+                    system_text_len += len(str(part.get("text") or ""))
 
             if force_json:
                 payload["generationConfig"]["responseMimeType"] = response_mime_type or "application/json"
@@ -831,7 +854,7 @@ class AIService:
                 "gemini_generate_content",
                 {
                     "url": url,
-                    "system_text_len": len(system_text),
+                    "system_text_len": system_text_len,
                     "message_count": len(contents),
                     "messages": _summarize_gemini_contents_for_log(contents),
                 },

@@ -263,3 +263,8 @@ def get_session_state_service() -> SessionStateService:
     if _session_state is None:
         _session_state = SessionStateService()
     return _session_state
+
+
+def get_session_state() -> SessionStateService:
+    """兼容旧引用名称。"""
+    return get_session_state_service()

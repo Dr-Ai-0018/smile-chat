@@ -453,14 +453,23 @@
               :class="['filter-btn', inviteFilter === 'used' ? 'active' : '']"
               @click="inviteFilter = 'used'"
             >已用 ({{ invites.filter(i => i.used).length }})</button>
+            <input
+              v-model.trim="inviteSearch"
+              type="text"
+              class="invite-search-input"
+              placeholder="搜索邀请码 / 用户ID / 用户名"
+            />
           </div>
+          <div class="mapping-hint">映射关系：邀请码 → 用户ID → 用户名（支持搜索筛选）</div>
 
           <table class="data-table invites-table">
             <thead>
               <tr>
                 <th>邀请码</th>
                 <th>状态</th>
-                <th>使用者</th>
+                <th>用户ID</th>
+                <th>用户名</th>
+                <th>实验条件</th>
                 <th>创建时间</th>
               </tr>
             </thead>
@@ -475,7 +484,9 @@
                     {{ invite.used ? '已使用' : '可用' }}
                   </span>
                 </td>
-                <td>{{ invite.used_by || '-' }}</td>
+                <td>{{ invite.used_by ?? '-' }}</td>
+                <td>{{ invite.used_username || '-' }}</td>
+                <td>{{ invite.used_condition ? formatCondition(invite.used_condition) : '-' }}</td>
                 <td>{{ formatDate(invite.created_at) }}</td>
               </tr>
             </tbody>
@@ -1490,6 +1501,7 @@ const invites = ref([])
 const memories = ref([])
 const userSearch = ref('')
 const inviteFilter = ref('all')
+const inviteSearch = ref('')
 const inviteCount = ref(5)
 const newInvites = ref([])
 const inviteCodeEnabled = ref(true)
@@ -1629,9 +1641,25 @@ const filteredUsers = computed(() => {
 
 // 过滤邀请码
 const filteredInvites = computed(() => {
-  if (inviteFilter.value === 'all') return invites.value
-  if (inviteFilter.value === 'available') return invites.value.filter(i => !i.used)
-  return invites.value.filter(i => i.used)
+  let base = invites.value
+  if (inviteFilter.value === 'available') {
+    base = base.filter(i => !i.used)
+  } else if (inviteFilter.value === 'used') {
+    base = base.filter(i => i.used)
+  }
+
+  const keyword = inviteSearch.value.trim().toLowerCase()
+  if (!keyword) return base
+
+  return base.filter(invite => {
+    const fields = [
+      invite.code,
+      invite.used_by == null ? '' : String(invite.used_by),
+      invite.used_username || '',
+      invite.used_condition || '',
+    ]
+    return fields.some(v => String(v).toLowerCase().includes(keyword))
+  })
 })
 const currentSystemPromptMeta = computed(() =>
   systemPrompts.value.find(item => item.condition === activeSysPrompt.value) || null
@@ -1682,6 +1710,12 @@ const revokeExportUrl = () => {
 
 const parseDownloadFilename = (headers = {}) => {
   const disposition = headers['content-disposition'] || headers['Content-Disposition'] || ''
+  const utf8Match = disposition.match(/filename\*\s*=\s*UTF-8''([^;]+)/i)
+  if (utf8Match?.[1]) {
+    try {
+      return decodeURIComponent(utf8Match[1])
+    } catch {}
+  }
   const match = disposition.match(/filename=\"?([^\";]+)\"?/)
   if (match?.[1]) {
     return decodeURIComponent(match[1])
@@ -3158,8 +3192,10 @@ onUnmounted(() => {
 
 .invites-filter {
   display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: 0.5rem;
-  margin-bottom: 1rem;
+  margin-bottom: 0.5rem;
 }
 
 .filter-btn {
@@ -3176,6 +3212,32 @@ onUnmounted(() => {
   background: rgba(255, 215, 0, 0.2);
   color: #ffd700;
   border-color: #ffd700;
+}
+
+.invite-search-input {
+  min-width: 220px;
+  flex: 1;
+  background: rgba(0, 0, 0, 0.28);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: rgba(255, 255, 255, 0.9);
+  padding: 0.52rem 0.75rem;
+  border-radius: 8px;
+  outline: none;
+}
+
+.invite-search-input::placeholder {
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.invite-search-input:focus {
+  border-color: rgba(255, 215, 0, 0.65);
+  box-shadow: 0 0 0 2px rgba(255, 215, 0, 0.15);
+}
+
+.mapping-hint {
+  margin: 0 0 0.8rem 0;
+  font-size: 0.82rem;
+  color: rgba(255, 255, 255, 0.65);
 }
 
 .code-cell {

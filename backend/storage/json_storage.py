@@ -882,7 +882,7 @@ class JsonStorage:
     def get_inbox_notices_for_user(self, user_id: int) -> List[Dict[str, Any]]:
         """返回所有已触发通知（含已读状态，收件箱用）"""
         user_msg_count = self.count_total_user_messages(user_id)
-        notices = self.get_notices(enabled_only=True)
+        notices = self.get_notices(enabled_only=False)
         # 只取全局通知 + 该用户专属通知
         notices = [n for n in notices if "user_id" not in n or n["user_id"] == user_id]
         states_data = self.read_json(self._user_notice_states_file(), {"items": []})
@@ -893,10 +893,18 @@ class JsonStorage:
         }
         result = []
         for n in sorted(notices, key=lambda x: -x.get("priority", 0)):
-            trigger_msg_count = int(n.get("trigger_msg_count", 0) or 0)
-            if trigger_msg_count > 0 and user_msg_count < trigger_msg_count:
-                continue
             state = states_map.get(n["id"])
+            enabled = bool(n.get("enabled", True))
+            trigger_msg_count = int(n.get("trigger_msg_count", 0) or 0)
+            reached_trigger = trigger_msg_count <= 0 or user_msg_count >= trigger_msg_count
+
+            # 收件箱展示规则：
+            # 1) 已展示/已读的历史通知始终保留（即使后续被禁用）
+            # 2) 当前仍启用且已触发阈值的通知可见
+            has_history_state = bool(state and (state.get("shown_at") or state.get("read_at")))
+            if not has_history_state and (not enabled or not reached_trigger):
+                continue
+
             result.append({
                 **n,
                 "shown_at": state.get("shown_at") if state else None,

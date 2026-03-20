@@ -17,6 +17,40 @@ class PromptManager:
     def __init__(self, prompts_dir: Optional[Path] = None):
         self.prompts_dir = prompts_dir or (Path(__file__).parent.parent / "prompts")
         self._cache: dict[str, str] = {}
+
+    def get_prompt_filename(self, condition: str) -> str:
+        filename = self.CONDITION_FILES.get(condition)
+        if filename:
+            return filename
+        return self.CONDITION_FILES["emotional"]
+
+    def get_prompt_path(self, condition: str) -> Path:
+        return self.prompts_dir / self.get_prompt_filename(condition)
+
+    def get_example_prompt_path(self, condition: str) -> Path:
+        filename = self.get_prompt_filename(condition)
+        stem = Path(filename).stem
+        suffix = Path(filename).suffix
+        return self.prompts_dir / f"{stem}_示例{suffix}"
+
+    def get_active_prompt_path(self, condition: str) -> Optional[Path]:
+        prompt_path = self.get_prompt_path(condition)
+        if prompt_path.exists() and prompt_path.is_file():
+            return prompt_path
+
+        example = self.get_example_prompt_path(condition)
+        if example.exists() and example.is_file():
+            return example
+
+        return None
+
+    def get_prompt_source(self, condition: str) -> str:
+        active = self.get_active_prompt_path(condition)
+        if active is None:
+            return "fallback"
+        if active.resolve() == self.get_prompt_path(condition).resolve():
+            return "prompt"
+        return "example"
     
     def get_system_prompt(self, condition: str = "emotional") -> str:
         """
@@ -31,17 +65,14 @@ class PromptManager:
         if condition in self._cache:
             return self._cache[condition]
         
-        filename = self.CONDITION_FILES.get(condition)
-        if not filename:
-            filename = self.CONDITION_FILES["emotional"]
-        
-        prompt_file = self.prompts_dir / filename
-        
-        if not prompt_file.exists():
+        prompt_file = self.get_active_prompt_path(condition)
+        if prompt_file is None:
             return self._get_fallback_prompt()
         
         try:
             content = prompt_file.read_text(encoding="utf-8").strip()
+            if not content:
+                return self._get_fallback_prompt()
             self._cache[condition] = content
             return content
         except Exception:
