@@ -14,9 +14,31 @@ def get_china_now() -> datetime:
 from routers.user import get_current_user
 from routers.admin import is_admin
 from storage import JsonStorage
+from services.weekly_survey_service import sync_weekly_survey_records_for_user
 
 router = APIRouter()
 storage = JsonStorage()
+
+
+def _update_weekly_notice_tracking(user_id: int, notice: dict, *, shown_at: Optional[str] = None, read_at: Optional[str] = None):
+    if not notice or notice.get("source") != "system_weekly":
+        return
+
+    week_key = str(notice.get("week_key") or "").strip()
+    if not week_key:
+        return
+
+    updates = {}
+    if shown_at:
+        updates["shown_at"] = shown_at
+    if read_at:
+        updates["read_at"] = read_at
+    if updates:
+        storage.upsert_weekly_survey_record(user_id, week_key, updates)
+
+    current_week = get_china_now().strftime("%Y-W%W")
+    if shown_at and week_key == current_week:
+        storage.update_user_experiment_state(user_id, {"weekly_survey_popup_shown": True})
 
 
 # ==================== Pydantic Models ====================
@@ -86,6 +108,7 @@ async def delete_notice(notice_id: int, admin_id: int = Depends(is_admin)):
 @router.get("/notices/pending")
 async def get_pending_notices(user_id: int = Depends(get_current_user)):
     """获取当前用户待确认的通知（已触发且未读）"""
+    sync_weekly_survey_records_for_user(user_id)
     pending = storage.get_pending_notices_for_user(user_id)
     return {"notices": pending}
 
@@ -93,6 +116,7 @@ async def get_pending_notices(user_id: int = Depends(get_current_user)):
 @router.get("/notices/inbox")
 async def get_inbox(user_id: int = Depends(get_current_user)):
     """获取当前用户收件箱（所有已触发通知，含已读状态）"""
+    sync_weekly_survey_records_for_user(user_id)
     inbox = storage.get_inbox_notices_for_user(user_id)
     return {"notices": inbox}
 
@@ -112,6 +136,12 @@ async def mark_notice_read(
         "shown_at": storage.get_user_notice_state(user_id, notice_id) and
                     storage.get_user_notice_state(user_id, notice_id).get("shown_at") or now,
     })
+    _update_weekly_notice_tracking(
+        user_id,
+        notice,
+        shown_at=state.get("shown_at"),
+        read_at=now,
+    )
     return {"state": state}
 
 
@@ -126,7 +156,9 @@ async def mark_notice_shown(
         raise HTTPException(status_code=404, detail="通知不存在")
     existing = storage.get_user_notice_state(user_id, notice_id)
     if not existing or not existing.get("shown_at"):
+        now = get_china_now().isoformat()
         storage.upsert_user_notice_state(user_id, notice_id, {
-            "shown_at": get_china_now().isoformat(),
+            "shown_at": now,
         })
+        _update_weekly_notice_tracking(user_id, notice, shown_at=now)
     return {"ok": True}

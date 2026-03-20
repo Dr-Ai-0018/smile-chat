@@ -340,8 +340,8 @@
                   <button
                     v-if="user.id !== 1"
                     class="action-btn delete"
-                    @click="deleteUser(user)"
-                    title="删除用户"
+                    disabled
+                    title="实验原始数据保护已开启，禁止删除用户"
                   >
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                       <polyline points="3 6 5 6 21 6"/>
@@ -1010,7 +1010,48 @@
                       <td>{{ formatTime(record.created_at) }}</td>
                       <td>{{ record.week_key }}</td>
                       <td>{{ record.round_count_at_checkin }}</td>
-                      <td class="wide-cell">{{ formatCheckinAnswers(record.answers) }}</td>
+                      <td class="wide-cell">{{ formatCheckinAnswers(record) }}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div class="detail-block">
+              <h4>周问卷历史</h4>
+              <div class="analytics-table-wrap compact">
+                <table class="data-table analytics-table compact">
+                  <thead>
+                    <tr>
+                      <th>周</th>
+                      <th>打卡快照</th>
+                      <th>状态</th>
+                      <th>达标时间</th>
+                      <th>已展示</th>
+                      <th>已读</th>
+                      <th>问卷链接</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="record in userDetail.weekly_surveys || []" :key="`weekly-survey-${record.id}`">
+                      <td>{{ record.week_key }}</td>
+                      <td>{{ formatWeeklySurveyCheckins(record) }}</td>
+                      <td>{{ formatWeeklySurveyStatus(record.status) }}</td>
+                      <td>{{ formatTime(record.qualified_at) || '-' }}</td>
+                      <td>{{ formatTime(record.shown_at) || '-' }}</td>
+                      <td>{{ formatTime(record.read_at) || '-' }}</td>
+                      <td class="wide-cell">
+                        <a
+                          v-if="record.survey_url_snapshot"
+                          :href="record.survey_url_snapshot"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          class="download-link"
+                        >
+                          打开该周问卷
+                        </a>
+                        <span v-else>-</span>
+                      </td>
                     </tr>
                   </tbody>
                 </table>
@@ -1057,7 +1098,7 @@
             </div>
           </div>
           <div class="modal-footer">
-            <button class="modal-btn danger" @click="clearUserHistoryAction">清空聊天记录</button>
+            <button class="modal-btn danger" disabled title="实验原始数据保护已开启，禁止清空聊天记录">清空聊天记录已禁用</button>
             <button class="modal-btn" @click="showUserModal = false">关闭</button>
           </div>
         </div>
@@ -1312,25 +1353,25 @@
                 <span class="explain-icon">🔄</span>
                 <div>
                   <strong>清零当前轮次</strong>
-                  <p>将所有用户的 <code>current_round_count</code> 重置为 0，并更新 <code>current_week_key</code> 为本周。<br/>
-                  <em>不影响</em>落盘的打卡记录（<code>checkin_records.json</code>）和历史消息，仅清除内存中的"本轮计数"临时状态。</p>
+                  <p>只清空 <code>current_round_count</code>、<code>session_start_time</code> 和 <code>last_user_message_time</code>。<br/>
+                  <em>不会推进</em> <code>current_week_key</code>，也不会删除任何落盘记录；如果系统已经进入新的一周，后端仍会在下次读取用户状态时自动执行跨周重置。</p>
                 </div>
               </div>
               <div class="explain-block">
                 <span class="explain-icon">🗑️</span>
                 <div>
-                  <strong>轮次 + 打卡都清零</strong>
+                  <strong>进入下一周（轮次 + 周统计重置）</strong>
                   <p>在清零轮次的基础上，同时将 <code>weekly_checkin_count</code> 和 <code>weekly_survey_popup_shown</code> 重置为 0/false。<br/>
-                  <em>同样不删除</em>落盘的 <code>checkin_records.json</code> 原始数据，只重置统计计数器。</p>
+                  并将 <code>current_week_key</code> 推进为本周，用于手动切换到新的实验周次。<em>同样不会删除</em> <code>checkin_records.json</code> 等原始数据。</p>
                 </div>
               </div>
             </div>
             <div class="cleanup-actions">
               <button class="cleanup-btn secondary" @click="runWeeklyCleanup(false)">
-                🔄 仅清零轮次
+                🔄 仅清空轮次缓存
               </button>
               <button class="cleanup-btn danger" @click="runWeeklyCleanup(true)">
-                🗑️ 轮次 + 打卡计数都清零
+                🗑️ 进入下一周（轮次 + 周统计重置）
               </button>
             </div>
           </div>
@@ -1456,6 +1497,7 @@ const userDetail = ref({
   request_logs: [],
   checkins: [],
   prompt_events: [],
+  weekly_surveys: [],
 })
 
 // 记忆编辑弹窗
@@ -2037,6 +2079,7 @@ const viewUserDetail = async (user) => {
       request_logs: res.request_logs || [],
       checkins: res.checkins || [],
       prompt_events: res.prompt_events || [],
+      weekly_surveys: res.weekly_surveys || [],
     }
   } catch (err) {
     console.error('加载聊天记录失败:', err)
@@ -2083,11 +2126,12 @@ const saveMemoryEdit = async () => {
   
   loading.value = true
   try {
-    await adminAPI.updateUserLongTermMemory(
+    const res = await adminAPI.updateUserLongTermMemory(
       editingMemory.value.user_id || editingMemory.value.id,
       editingLongTermMemory.value
     )
-    toast.success('记忆保存成功')
+    const backupName = res?.backup?.filename
+    toast.success(backupName ? `记忆保存成功，已自动备份：${backupName}` : '记忆保存成功，已自动备份')
     showMemoryModal.value = false
     await loadAllMemory()
   } catch (err) {
@@ -2128,8 +2172,9 @@ const clearUserMemory = async (mem) => {
   
   if (confirmed) {
     try {
-      await adminAPI.clearUserMemory(mem.user_id)
-      toast.success('记忆已清空')
+      const res = await adminAPI.clearUserMemory(mem.user_id)
+      const backupName = res?.backup?.filename
+      toast.success(backupName ? `记忆已清空，已自动备份：${backupName}` : '记忆已清空，已自动备份')
       await loadAllMemory()
     } catch (err) {
       toast.error('清空记忆失败')
@@ -2163,49 +2208,6 @@ const resetUserPassword = async (user) => {
     toast.success(`已重置 ${user.username} 的密码`)
   } catch (err) {
     toast.error('重置密码失败')
-  }
-}
-
-const deleteUser = async (user) => {
-  const confirmed = await confirm({
-    title: '删除用户',
-    message: `确定要删除用户 ${user.username} 吗？此操作将删除该用户的所有数据！`,
-    type: 'danger',
-    confirmText: '确认删除'
-  })
-  
-  if (confirmed) {
-    try {
-      await adminAPI.deleteUser(user.id)
-      toast.success('用户已删除')
-      await loadUsers()
-      await loadStats()
-      await loadDetailedStats()
-    } catch (err) {
-      toast.error(err.response?.data?.detail || '删除失败')
-    }
-  }
-}
-
-const clearUserHistoryAction = async () => {
-  if (!selectedUser.value) return
-  
-  const confirmed = await confirm({
-    title: '清空聊天记录',
-    message: `确定要清空 ${selectedUser.value.username} 的所有聊天记录吗？`,
-    type: 'danger',
-    confirmText: '确认清空'
-  })
-  
-  if (confirmed) {
-    try {
-      await adminAPI.clearUserHistory(selectedUser.value.id)
-      toast.success('聊天记录已清空')
-      userHistory.value = []
-      await Promise.all([loadUsers(), loadStats(), loadDetailedStats()])
-    } catch (err) {
-      toast.error('清空失败')
-    }
   }
 }
 
@@ -2392,9 +2394,41 @@ const formatLatency = (value) => {
   return `${Math.round(n)} ms`
 }
 
-const formatCheckinAnswers = (answers) => {
+const formatCheckinAnswers = (record) => {
+  const target = record && typeof record === 'object' && 'answers' in record ? record : { answers: record }
+  const answers = target?.answers
   if (!answers || typeof answers !== 'object') return '-'
+
+  const questions = Array.isArray(target?.questions_snapshot) ? target.questions_snapshot : []
+  if (questions.length > 0) {
+    return questions
+      .map((question, index) => `${index + 1}. ${question}：${answers[`q${index}`] ?? '-'}`)
+      .join('  /  ')
+  }
+
   return Object.entries(answers).map(([key, value]) => `${key}:${value}`).join('  ')
+}
+
+const formatWeeklySurveyStatus = (status) => {
+  const map = {
+    read: '已读',
+    shown: '已弹窗',
+    pending: '待提醒',
+    eligible: '已达标待派发',
+    not_qualified: '未达标',
+  }
+  return map[status] || status || '-'
+}
+
+const formatWeeklySurveyCheckins = (record) => {
+  if (!record) return '-'
+  const current = Number(record.weekly_checkin_count_snapshot || 0)
+  const required = Number(record.required_checkins_snapshot || 0)
+  const qualified = record.qualified_checkin_count_snapshot
+  if (qualified !== null && qualified !== undefined && qualified !== '') {
+    return `${current}/${required || '-'}（触发时 ${qualified} 次）`
+  }
+  return `${current}/${required || '-'}`
 }
 
 const formatApiOverrideHint = (scope, field, effectiveValue, index = 0) => {
@@ -2484,8 +2518,8 @@ const runWeeklyCleanup = async (resetCheckins = false) => {
   const confirmed = await confirm({
     title: '执行每周清理',
     message: resetCheckins
-      ? '这会清零所有用户的当前轮次，并同时清零本周打卡统计，确定继续吗？'
-      : '这会清零所有用户的当前轮次，确定继续吗？',
+      ? '这会把所有用户推进到新的实验周次：清空当前轮次，并同时重置本周打卡统计与周问卷弹窗标记。所有历史记录会完整保留，确定继续吗？'
+      : '这会只清空所有用户的当前轮次缓存，不会修改周统计，也不会删除任何落盘记录。确定继续吗？',
     type: 'danger',
     confirmText: '确认执行',
   })
@@ -2493,7 +2527,11 @@ const runWeeklyCleanup = async (resetCheckins = false) => {
 
   try {
     const res = await adminAPI.triggerWeeklyCleanup(resetCheckins)
-    toast.success(`${res.message}，影响 ${res.updated_users} 位用户`)
+    toast.success(
+      resetCheckins
+        ? `${res.message}，已将 ${res.updated_users} 位用户切换到 ${res.current_week_key}`
+        : `${res.message}，已清空 ${res.updated_users} 位用户的轮次缓存`
+    )
     await Promise.all([loadUsers(), loadDetailedStats(), loadStats()])
   } catch (err) {
     console.error('执行每周清理失败:', err)

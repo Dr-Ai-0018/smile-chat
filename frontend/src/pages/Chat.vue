@@ -778,7 +778,7 @@ const openCheckin = () => {
 const handleCheckinSuccess = async () => {
   showCheckinDialog.value = false
   toast.success('打卡成功！')
-  await refreshCheckinStatus()
+  await Promise.all([refreshCheckinStatus(), loadPendingNotices(), loadInbox()])
 }
 
 // ==================== 通知系统逻辑 ====================
@@ -844,7 +844,7 @@ const checkWeekendSurvey = async () => {
       loadInbox()
     }
   } catch (e) {
-    console.error('周末问卷检查失败', e)
+    console.error('周问卷检查失败', e)
   }
 }
 

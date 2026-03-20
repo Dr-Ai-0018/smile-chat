@@ -783,6 +783,8 @@ class JsonStorage:
             # 可选：限定特定用户（user_id 存在时为用户专属通知）
             if "user_id" in data:
                 notice["user_id"] = data["user_id"]
+            if "week_key" in data:
+                notice["week_key"] = data["week_key"]
             notices["items"].append(notice)
             notices["next_id"] = notice_id + 1
             self._write_json_atomic_unlocked(path, notices)
@@ -901,6 +903,111 @@ class JsonStorage:
                 "read_at": state.get("read_at") if state else None,
             })
         return result
+
+    # ==================== Weekly Survey Records ====================
+
+    def _weekly_survey_records_file(self) -> Path:
+        return self.base_dir / "weekly_survey_records.json"
+
+    def _read_weekly_survey_records_unlocked(self) -> Dict[str, Any]:
+        data = self._read_json_unlocked(self._weekly_survey_records_file(), {"next_id": 1, "items": []})
+        if not isinstance(data, dict):
+            data = {"next_id": 1, "items": []}
+        if not isinstance(data.get("items"), list):
+            data["items"] = []
+        next_id = data.get("next_id")
+        if not isinstance(next_id, int) or next_id < 1:
+            data["next_id"] = 1
+        return data
+
+    def upsert_weekly_survey_record(
+        self,
+        user_id: int,
+        week_key: str,
+        updates: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        path = self._weekly_survey_records_file()
+        with self._lock_paths([path]):
+            data = self._read_weekly_survey_records_unlocked()
+            items = data.get("items", [])
+            record = None
+            for item in items:
+                if item.get("user_id") == user_id and item.get("week_key") == week_key:
+                    record = item
+                    break
+
+            now_iso = get_china_now().isoformat()
+            if record is None:
+                record = {
+                    "id": data.get("next_id", 1),
+                    "user_id": user_id,
+                    "week_key": week_key,
+                    "weekly_checkin_count_snapshot": 0,
+                    "qualified_checkin_count_snapshot": None,
+                    "required_checkins_snapshot": 0,
+                    "eligible": False,
+                    "survey_url_snapshot": "",
+                    "notice_id": None,
+                    "notice_created_at": None,
+                    "qualified_at": None,
+                    "shown_at": None,
+                    "read_at": None,
+                    "notice_title_snapshot": "",
+                    "notice_content_snapshot": "",
+                    "created_at": now_iso,
+                    "updated_at": now_iso,
+                }
+                items.append(record)
+                data["next_id"] = int(record["id"]) + 1
+
+            for key, value in updates.items():
+                record[key] = value
+            record["updated_at"] = now_iso
+            self._write_json_atomic_unlocked(path, data)
+            return dict(record)
+
+    def get_weekly_survey_records(
+        self,
+        user_id: Optional[int] = None,
+        limit: int = 0,
+    ) -> List[Dict[str, Any]]:
+        data = self.read_json(self._weekly_survey_records_file(), {"next_id": 1, "items": []})
+        items = data.get("items", [])
+        results: List[Dict[str, Any]] = []
+
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            if user_id is not None and item.get("user_id") != user_id:
+                continue
+
+            record = dict(item)
+            notice_id = record.get("notice_id")
+            if isinstance(notice_id, int) and notice_id > 0:
+                state = self.get_user_notice_state(record.get("user_id"), notice_id)
+                if state:
+                    if state.get("shown_at"):
+                        record["shown_at"] = state.get("shown_at")
+                    if state.get("read_at"):
+                        record["read_at"] = state.get("read_at")
+
+            if record.get("read_at"):
+                record["status"] = "read"
+            elif record.get("shown_at"):
+                record["status"] = "shown"
+            elif record.get("notice_id"):
+                record["status"] = "pending"
+            elif record.get("eligible"):
+                record["status"] = "eligible"
+            else:
+                record["status"] = "not_qualified"
+
+            results.append(record)
+
+        results.sort(key=lambda item: str(item.get("week_key") or ""), reverse=True)
+        if limit and limit > 0:
+            return results[:limit]
+        return results
 
     # ==================== Experiment State ====================
 
@@ -1031,7 +1138,7 @@ class JsonStorage:
                 if reset_checkins:
                     state["weekly_checkin_count"] = 0
                     state["weekly_survey_popup_shown"] = False
-                if reset_week_key:
+                if reset_week_key and reset_checkins:
                     state["current_week_key"] = current_week
                 updated += 1
 
@@ -1058,6 +1165,7 @@ class JsonStorage:
         answers: Dict[str, Any],
         round_count: int,
         week_key: str,
+        questions_snapshot: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         path = self._checkin_records_file()
         with self._lock_paths([path]):
@@ -1070,6 +1178,9 @@ class JsonStorage:
                 "round_count_at_checkin": round_count,
                 "created_at": get_china_now().isoformat(),
                 "week_key": week_key,
+                "questions_snapshot": list(questions_snapshot or []),
+                "scale_min": 1,
+                "scale_max": 7,
             }
             data["items"].append(record)
             data["next_id"] = record_id + 1

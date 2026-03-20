@@ -9,6 +9,10 @@ from datetime import datetime, timedelta, timezone
 
 from routers.user import get_current_user
 from storage import JsonStorage
+from services.weekly_survey_service import (
+    get_latest_pending_weekly_survey_notice,
+    sync_weekly_survey_records_for_user,
+)
 
 CHINA_TZ = timezone(timedelta(hours=8))
 
@@ -77,6 +81,7 @@ async def get_checkin_status(user_id: int = Depends(get_current_user)):
     """获取当前打卡状态"""
     state = storage.get_user_experiment_state(user_id)
     can, cooldown = _can_checkin(state)
+    sync_weekly_survey_records_for_user(user_id)
 
     settings = storage.get_settings()
     questions = settings.get("checkin_questions", DEFAULT_QUESTIONS)
@@ -122,67 +127,62 @@ async def submit_checkin(
         answers=answers,
         round_count=round_count,
         week_key=week_key,
+        questions_snapshot=questions,
     )
 
-    storage.update_user_experiment_state(user_id, {
+    state = storage.update_user_experiment_state(user_id, {
         "current_round_count": 0,
         "last_checkin_at": now.isoformat(),
         "weekly_checkin_count": state.get("weekly_checkin_count", 0) + 1,
         "session_start_time": None,
     })
+    weekly_records = sync_weekly_survey_records_for_user(user_id)
+    current_week_record = next((item for item in weekly_records if item.get("week_key") == week_key), None)
 
-    return {"ok": True, "record_id": record["id"]}
+    return {
+        "ok": True,
+        "record_id": record["id"],
+        "weekly_checkin_count": state.get("weekly_checkin_count", 0),
+        "weekly_survey_status": current_week_record,
+    }
 
 
 @router.get("/checkin/weekend_survey_check")
 async def weekend_survey_check(user_id: int = Depends(get_current_user)):
-    """用户上线时调用，检查是否需要弹出周末问卷"""
-    now = get_china_now()
-    weekday = now.weekday()  # 0=周一 ... 5=周六 6=周日
-    is_weekend = weekday in (5, 6)
+    """
+    同步并检查用户是否存在待展示的周问卷提醒。
 
-    if not is_weekend:
-        return {"should_popup": False, "notice_id": None, "survey_url": None}
+    兼容旧接口名称，但真实派发逻辑以“达到本周打卡阈值”为准，
+    不再依赖用户是否恰好在周末在线。
+    """
+    notice = get_latest_pending_weekly_survey_notice(user_id)
+    if not notice:
+        return {
+            "should_popup": False,
+            "notice_id": None,
+            "survey_url": None,
+            "notice_content": None,
+            "week_key": None,
+        }
 
-    min_weekly_checkins_for_survey = _runtime_setting_int(
-        "min_weekly_checkins_for_survey",
-        MIN_WEEKLY_CHECKINS_FOR_SURVEY,
+    weekly_record = next(
+        (
+            item for item in storage.get_weekly_survey_records(user_id=user_id, limit=0)
+            if item.get("notice_id") == notice.get("id")
+        ),
+        None,
     )
-    state = storage.get_user_experiment_state(user_id)
-    weekly_count = state.get("weekly_checkin_count", 0)
-    already_shown = state.get("weekly_survey_popup_shown", False)
-
-    if weekly_count < min_weekly_checkins_for_survey or already_shown:
-        return {"should_popup": False, "notice_id": None, "survey_url": None}
-
-    # 满足条件：写入用户专属 notice（收件箱可回看），标记本周已弹
-    settings = storage.get_settings()
-    survey_url = settings.get("weekly_survey_url", "")
-
-    content = f"本周你已完成 {weekly_count} 次打卡，请填写本周问卷。"
-    if survey_url:
-        content += f"\n\n[点击填写问卷]({survey_url})"
-
-    notice = storage.create_notice({
-        "title": "本周问卷提醒",
-        "content": content,
-        "enabled": True,
-        "trigger_msg_count": 0,
-        "priority": 10,
-        "source": "system_weekly",
-        "user_id": user_id,  # 用户专属，不泄漏给其他人
-    })
-    # 标记已展示（首次自动弹）
-    storage.upsert_user_notice_state(user_id, notice["id"], {
-        "shown_at": now.isoformat(),
-    })
-    storage.update_user_experiment_state(user_id, {"weekly_survey_popup_shown": True})
+    survey_url = ""
+    if weekly_record:
+        survey_url = str(weekly_record.get("survey_url_snapshot") or "").strip()
 
     return {
         "should_popup": True,
         "notice_id": notice["id"],
         "survey_url": survey_url,
-        "notice_content": content,
+        "notice_content": notice.get("content"),
+        "week_key": notice.get("week_key"),
+        "weekly_record": weekly_record,
     }
 
 

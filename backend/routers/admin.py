@@ -12,6 +12,7 @@ import json
 import io
 import re
 import zipfile
+import shutil
 from datetime import datetime, timezone, timedelta
 
 # 中国时区 UTC+8
@@ -30,6 +31,7 @@ from services.memory_service import get_memory_service
 from services.ai_service import AIService
 from services.prompt_manager import get_prompt_manager
 from services.chat_logger import get_chat_logger
+from services.weekly_survey_service import sync_weekly_survey_records_for_user
 
 router = APIRouter()
 storage = JsonStorage()
@@ -39,6 +41,7 @@ prompt_manager = get_prompt_manager()
 chat_logger = get_chat_logger()
 
 MEMORY_BASE_PATH = Path(__file__).parent.parent.parent / "memory" / "本体"
+MEMORY_BACKUP_BASE_PATH = Path(__file__).parent.parent.parent / "memory" / "备份" / "用户记忆"
 PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
 CONDITION_FILES = {
     "emotional": "情感表露.txt",
@@ -95,6 +98,13 @@ def _runtime_setting_int(key: str, default: int) -> int:
         return int(settings.get(key, default))
     except Exception:
         return default
+
+
+def _raw_data_protection_error(action: str) -> HTTPException:
+    return HTTPException(
+        status_code=403,
+        detail=f"实验原始数据保护已开启，当前不允许执行“{action}”。如需进入新阶段，请使用周清理或数据导出。",
+    )
 
 
 def _build_user_metrics(user: dict, *, log_limit: int = 200) -> dict:
@@ -180,6 +190,7 @@ def _build_user_export_payload(user_id: int) -> Dict[str, Any]:
     user = storage.get_user_by_id(user_id)
     if not user:
         raise HTTPException(status_code=404, detail=f"用户 {user_id} 不存在")
+    sync_weekly_survey_records_for_user(user_id)
 
     memory_dir = MEMORY_BASE_PATH / str(user_id)
     history_dir = memory_dir / "history"
@@ -215,6 +226,7 @@ def _build_user_export_payload(user_id: int) -> Dict[str, Any]:
         "prompt_states": storage.get_user_prompt_states(user_id),
         "notices": storage.get_inbox_notices_for_user(user_id),
         "notice_states": storage.get_user_notice_states(user_id),
+        "weekly_surveys": storage.get_weekly_survey_records(user_id=user_id, limit=0),
         "history": storage.get_chat_history(user_id=user_id, limit=0),
         "memory": {
             "long_term": _safe_read_text(ltm_file),
@@ -222,6 +234,62 @@ def _build_user_export_payload(user_id: int) -> Dict[str, Any]:
             "history_files": history_files,
             "raw_logs": raw_log_files,
         },
+    }
+
+
+def _create_memory_backup(
+    user_id: int,
+    *,
+    action: str,
+    admin_id: int,
+    note: str = "",
+) -> Dict[str, Any]:
+    user = storage.get_user_by_id(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="用户不存在")
+
+    memory_dir = MEMORY_BASE_PATH / str(user_id)
+    backup_dir = MEMORY_BACKUP_BASE_PATH / str(user_id)
+    backup_dir.mkdir(parents=True, exist_ok=True)
+
+    now = get_china_now()
+    timestamp = now.strftime("%Y-%m-%d_%H-%M-%S")
+    backup_name = f"{timestamp}_{action}.zip"
+    backup_path = backup_dir / backup_name
+
+    include_dirs = ["ltm", "json", "memory", "history"]
+    metadata = {
+        "backup_type": "admin_memory_backup",
+        "action": action,
+        "user_id": user_id,
+        "username": user.get("username"),
+        "admin_id": admin_id,
+        "created_at": now.isoformat(),
+        "note": note,
+        "source_dir": str(memory_dir),
+        "included_sections": include_dirs,
+    }
+
+    with zipfile.ZipFile(backup_path, mode="w", compression=zipfile.ZIP_DEFLATED) as zip_file:
+        _zip_write_json(zip_file, "metadata.json", metadata)
+
+        for section in include_dirs:
+            source = memory_dir / section
+            if source.is_file():
+                zip_file.write(source, arcname=f"{section}/{source.name}")
+                continue
+            if not source.exists():
+                continue
+            for file in sorted(source.rglob("*")):
+                if not file.is_file():
+                    continue
+                arcname = file.relative_to(memory_dir).as_posix()
+                zip_file.write(file, arcname=arcname)
+
+    return {
+        "filename": backup_name,
+        "path": str(backup_path),
+        "created_at": now.isoformat(),
     }
 
 # 管理员检查
@@ -290,12 +358,14 @@ async def get_user_detail(
     user = storage.get_user_by_id(user_id)
     if not user:
         raise HTTPException(status_code=404, detail="用户不存在")
+    sync_weekly_survey_records_for_user(user_id)
 
     metrics = _build_user_metrics(user, log_limit=max(20, min(log_limit, 500)))
     history = storage.get_chat_history(user_id=user_id, limit=max(20, min(history_limit, 300)))
     checkins = storage.get_checkin_records(user_id)
     prompt_events = storage.get_prompt_events(user_id=user_id, limit=200)
     logs = chat_logger.get_paired_logs(user_id, limit=max(20, min(log_limit, 500)))
+    weekly_surveys = storage.get_weekly_survey_records(user_id=user_id, limit=0)
 
     return {
         "user": {
@@ -310,6 +380,7 @@ async def get_user_detail(
         "checkins": checkins,
         "request_logs": logs,
         "prompt_events": prompt_events,
+        "weekly_surveys": weekly_surveys,
     }
 
 @router.get("/user/{user_id}/memory")
@@ -362,12 +433,7 @@ async def clear_user_history(
     admin_id: int = Depends(is_admin),
 ):
     """清空指定用户的聊天记录（管理员权限）"""
-    if not storage.get_user_by_id(user_id):
-        raise HTTPException(status_code=404, detail="用户不存在")
-
-    storage.clear_chat_history(user_id)
-    
-    return {"message": f"用户 {user_id} 的聊天记录已清空"}
+    raise _raw_data_protection_error("清空聊天记录")
 
 @router.post("/create_invite")
 async def create_invite_codes(
@@ -483,10 +549,16 @@ async def update_user_long_term_memory(
     """更新用户长期记忆"""
     if not storage.get_user_by_id(user_id):
         raise HTTPException(status_code=404, detail="用户不存在")
-    
+
+    backup = _create_memory_backup(
+        user_id,
+        action="edit_long_term",
+        admin_id=admin_id,
+        note="管理员编辑长期记忆前自动备份",
+    )
     memory_service.write_ltm(user_id, request.content, {"admin_edit": True})
-    
-    return {"message": "记忆更新成功"}
+
+    return {"message": "记忆更新成功，已自动备份", "backup": backup}
 
 @router.delete("/user/{user_id}/memory")
 async def clear_user_memory(
@@ -496,20 +568,22 @@ async def clear_user_memory(
     """清空用户所有记忆"""
     if not storage.get_user_by_id(user_id):
         raise HTTPException(status_code=404, detail="用户不存在")
-    
+
+    backup = _create_memory_backup(
+        user_id,
+        action="clear_memory",
+        admin_id=admin_id,
+        note="管理员清空记忆前自动备份",
+    )
     memory_dir = MEMORY_BASE_PATH / str(user_id)
-    
-    import shutil
-    if memory_dir.exists():
-        shutil.rmtree(memory_dir)
-    
-    # 重新创建空目录结构
-    (memory_dir / "history").mkdir(parents=True, exist_ok=True)
-    (memory_dir / "json").mkdir(parents=True, exist_ok=True)
-    (memory_dir / "memory").mkdir(parents=True, exist_ok=True)
-    (memory_dir / "ltm").mkdir(parents=True, exist_ok=True)
-    
-    return {"message": "记忆已清空"}
+
+    for section in ("history", "json", "memory", "ltm"):
+        target = memory_dir / section
+        if target.exists():
+            shutil.rmtree(target, ignore_errors=True)
+        target.mkdir(parents=True, exist_ok=True)
+
+    return {"message": "记忆已清空，已自动备份", "backup": backup}
 
 @router.get("/user/{user_id}/history_file/{filename}")
 async def get_history_file(
@@ -530,22 +604,7 @@ async def delete_user(
     admin_id: int = Depends(is_admin),
 ):
     """删除用户及其所有数据"""
-    if user_id == 1:
-        raise HTTPException(status_code=403, detail="不能删除管理员")
-
-    if not storage.get_user_by_id(user_id):
-        raise HTTPException(status_code=404, detail="用户不存在")
-
-    storage.clear_chat_history(user_id)
-    storage.delete_user(user_id)
-    
-    # 删除记忆文件
-    import shutil
-    memory_dir = MEMORY_BASE_PATH / str(user_id)
-    if memory_dir.exists():
-        shutil.rmtree(memory_dir)
-    
-    return {"message": "用户已删除"}
+    raise _raw_data_protection_error("删除用户")
 
 @router.get("/stats")
 async def get_system_stats(
@@ -781,7 +840,7 @@ async def trigger_weekly_cleanup(
     """手动执行每周清理：至少清零当前轮次，可选同时清零本周打卡计数。"""
     updated = storage.reset_weekly_experiment_state(
         reset_checkins=req.reset_checkins,
-        reset_week_key=True,
+        reset_week_key=req.reset_checkins,
     )
     return {
         "message": "每周清理已执行",
@@ -874,6 +933,7 @@ async def export_users_zip(
             _zip_write_json(zip_file, f"{base}prompt_states.json", item.get("prompt_states") or [])
             _zip_write_json(zip_file, f"{base}notices.json", item.get("notices") or [])
             _zip_write_json(zip_file, f"{base}notice_states.json", item.get("notice_states") or [])
+            _zip_write_json(zip_file, f"{base}weekly_surveys.json", item.get("weekly_surveys") or [])
             _zip_write_json(zip_file, f"{base}chat_history.json", item.get("history") or [])
 
             memory = item.get("memory") or {}
