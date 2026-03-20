@@ -195,16 +195,19 @@ onMounted(() => {
 <style scoped>
 .settings-page {
   min-height: 100vh;
+  min-height: 100dvh;
+  min-height: var(--app-height);
   background: var(--color-bg-light);
 }
 
 .settings-header {
   background: var(--color-primary);
-  padding: 1rem 1.5rem;
+  padding: calc(1rem + var(--safe-area-top)) calc(1.5rem + var(--safe-area-right)) 1rem calc(1.5rem + var(--safe-area-left));
   display: flex;
   align-items: center;
   justify-content: space-between;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  gap: 1rem;
 }
 
 .settings-header h1 {
@@ -225,6 +228,9 @@ onMounted(() => {
   max-width: 800px;
   margin: 0 auto;
   padding: 2rem 1.5rem;
+  padding-right: calc(1.5rem + var(--safe-area-right));
+  padding-left: calc(1.5rem + var(--safe-area-left));
+  padding-bottom: calc(2rem + var(--safe-area-bottom));
 }
 
 .settings-section {
@@ -386,9 +392,39 @@ onMounted(() => {
 }
 
 @media (max-width: 768px) {
+  .settings-header {
+    padding: calc(0.875rem + var(--safe-area-top)) calc(0.875rem + var(--safe-area-right)) 0.875rem calc(0.875rem + var(--safe-area-left));
+  }
+
+  .settings-header h1 {
+    font-size: 1.25rem;
+  }
+
+  .back-btn {
+    padding: 0.25rem 0;
+  }
+
+  .settings-content {
+    padding: 1rem 0.875rem;
+    padding-right: calc(0.875rem + var(--safe-area-right));
+    padding-left: calc(0.875rem + var(--safe-area-left));
+    padding-bottom: calc(1.25rem + var(--safe-area-bottom));
+  }
+
+  .settings-section {
+    padding: 1.25rem;
+    border-radius: 16px;
+    margin-bottom: 1rem;
+  }
+
   .user-info {
     flex-direction: column;
     text-align: center;
+    gap: 1rem;
+  }
+
+  .user-details {
+    width: 100%;
   }
   
   .button-group {
@@ -397,6 +433,32 @@ onMounted(() => {
   
   .button-group button {
     width: 100%;
+    min-height: 48px;
+  }
+}
+
+@media (max-width: 400px) {
+  .settings-header {
+    padding: calc(0.75rem + var(--safe-area-top)) calc(0.625rem + var(--safe-area-right)) 0.75rem calc(0.625rem + var(--safe-area-left));
+  }
+
+  .settings-content {
+    padding: 0.875rem 0.625rem;
+    padding-right: calc(0.625rem + var(--safe-area-right));
+    padding-left: calc(0.625rem + var(--safe-area-left));
+  }
+
+  .settings-section {
+    padding: 1rem;
+  }
+
+  .avatar-display {
+    width: 88px;
+    height: 88px;
+  }
+
+  .avatar-placeholder {
+    font-size: 2rem;
   }
 }
 </style>
