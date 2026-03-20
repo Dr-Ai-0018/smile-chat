@@ -262,6 +262,9 @@ const unreadNoticeCount = computed(() =>
 )
 let globalListenersAttached = false
 let viewportListenersAttached = false
+let checkinSyncTimer = null
+let checkinSyncInFlight = false
+const CHECKIN_STATUS_SYNC_INTERVAL_MS = 60000
 
 const isPageVisible = () => {
   if (typeof document === 'undefined') return true
@@ -362,6 +365,8 @@ const sendMessage = async (imageBase64 = null) => {
   }
   messages.value.push(userMsg)
   scrollToBottom()
+  // 用户发送后立即从后端同步一次打卡状态，避免前端高亮滞后
+  setTimeout(() => refreshCheckinStatus(), 120)
   
   // 情况1：AI正在等待回复（loading但还没开始流式输出）
   // → 立即中断当前请求，重新发送包含新消息的请求
@@ -758,12 +763,31 @@ const handlePromptSkip = async () => {
 
 // ==================== 打卡系统逻辑 ====================
 const refreshCheckinStatus = async () => {
+  if (checkinSyncInFlight) return
+  checkinSyncInFlight = true
   try {
     const res = await checkinAPI.getStatus()
     canCheckin.value = res.can_checkin
     checkinQuestions.value = res.questions || []
   } catch (e) {
     console.error('获取打卡状态失败', e)
+  } finally {
+    checkinSyncInFlight = false
+  }
+}
+
+const startCheckinAutoSync = () => {
+  stopCheckinAutoSync()
+  checkinSyncTimer = window.setInterval(() => {
+    if (!isPageVisible()) return
+    refreshCheckinStatus()
+  }, CHECKIN_STATUS_SYNC_INTERVAL_MS)
+}
+
+const stopCheckinAutoSync = () => {
+  if (checkinSyncTimer) {
+    clearInterval(checkinSyncTimer)
+    checkinSyncTimer = null
   }
 }
 
@@ -892,12 +916,14 @@ onMounted(async () => {
   // 周末问卷检查
   checkWeekendSurvey()
   attachGlobalListeners()
+  startCheckinAutoSync()
 })
 
 onActivated(() => {
   updateViewportHeight()
   attachViewportListeners()
   attachGlobalListeners()
+  startCheckinAutoSync()
   scrollToBottom()
   if (isPageVisible()) {
     handleVisibilityChange()
@@ -907,6 +933,7 @@ onActivated(() => {
 onDeactivated(() => {
   detachViewportListeners()
   detachGlobalListeners()
+  stopCheckinAutoSync()
 })
 
 onUnmounted(() => {
@@ -916,6 +943,7 @@ onUnmounted(() => {
   }
   detachViewportListeners()
   detachGlobalListeners()
+  stopCheckinAutoSync()
 })
 </script>
 

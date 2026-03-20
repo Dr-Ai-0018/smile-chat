@@ -104,30 +104,38 @@ class AIService:
         schema: Dict[str, Any] = {
             "type": "object",
             "properties": {
+                "relationship_stage_judge": {"type": "string", "enum": ["A", "B", "C"]},
+                "did_self_disclosure": {"type": "boolean"},
                 "reply": {"type": "string"},
                 "segments": {"type": "array", "items": {"type": "string"}},
-                "did_self_disclosure": {"type": "boolean"},
-                "relationship_stage_judge": {"type": "string", "enum": ["A", "B", "C"]},
             },
-            "required": ["reply", "segments", "did_self_disclosure", "relationship_stage_judge"],
+            "required": ["relationship_stage_judge", "did_self_disclosure", "reply", "segments"],
         }
+        if for_gemini:
+            # Gemini 原生支持 propertyOrdering，可显式约束输出字段顺序
+            schema["propertyOrdering"] = [
+                "relationship_stage_judge",
+                "did_self_disclosure",
+                "reply",
+                "segments",
+            ]
         return schema
 
     def _build_v2_output_contract_text(self) -> str:
         return (
             "你必须只输出一个 JSON 对象，不要输出任何额外文字，不要 Markdown。\n"
             "字段必须且只能包含：\n"
+            "- relationship_stage_judge: string enum A/B/C\n"
+            "- did_self_disclosure: boolean\n"
             "- reply: string\n"
             "- segments: array of string\n"
-            "- did_self_disclosure: boolean\n"
-            "- relationship_stage_judge: string enum A/B/C\n"
         )
 
     def _build_repair_user_prompt(self, original_user_text: str, bad_text_or_obj: str, error_msg: str) -> str:
         return (
             "你刚才的输出不符合后端要求，需要你立刻修复并重写。\n"
             "要求：只输出一个 JSON 对象，不要任何额外文字，不要 Markdown。\n"
-            "字段必须且只能包含：reply(字符串), segments(字符串数组), did_self_disclosure(布尔), relationship_stage_judge(只能是A/B/C)。\n"
+            "字段必须且只能包含：relationship_stage_judge(只能是A/B/C), did_self_disclosure(布尔), reply(字符串), segments(字符串数组)。\n"
             f"原始用户输入：{original_user_text}\n"
             f"错误原因：{error_msg}\n"
             f"你刚才的输出：{bad_text_or_obj}\n"
@@ -471,9 +479,6 @@ class AIService:
         if not api_key:
             raise ValueError(f"API Key未配置，请设置环境变量: {api_config.get('api_key_env', 'OPENAI_API_KEY')}")
 
-        if force_json and response_schema is None:
-            response_schema = self._build_v2_response_schema()
-
         def _should_use_gemini() -> bool:
             api_type = (api_config.get("api_type") or "").strip().lower()
             if api_type == "gemini":
@@ -500,6 +505,9 @@ class AIService:
                 return True
 
             return False
+
+        if force_json and response_schema is None:
+            response_schema = self._build_v2_response_schema(for_gemini=_should_use_gemini())
 
         def _extract_openai_content(result: dict) -> Tuple[str, str]:
             choices = result.get("choices")
@@ -722,12 +730,14 @@ class AIService:
 
             payloads: List[Dict[str, Any]] = []
             if force_json:
+                openai_schema = dict(response_schema or self._build_v2_response_schema())
+                openai_schema.pop("propertyOrdering", None)
                 payload1 = dict(base_payload)
                 payload1["response_format"] = {
                     "type": "json_schema",
                     "json_schema": {
                         "name": "smile_chat_response",
-                        "schema": response_schema,
+                        "schema": openai_schema,
                         "strict": True,
                     },
                 }
@@ -807,7 +817,15 @@ class AIService:
 
             if force_json:
                 payload["generationConfig"]["responseMimeType"] = response_mime_type or "application/json"
-                payload["generationConfig"]["responseSchema"] = response_schema
+                gemini_schema = dict(response_schema or self._build_v2_response_schema(for_gemini=True))
+                if "propertyOrdering" not in gemini_schema:
+                    gemini_schema["propertyOrdering"] = [
+                        "relationship_stage_judge",
+                        "did_self_disclosure",
+                        "reply",
+                        "segments",
+                    ]
+                payload["generationConfig"]["responseSchema"] = gemini_schema
 
             _log_outbound_request(
                 "gemini_generate_content",
@@ -1005,10 +1023,9 @@ class AIService:
         
         按照reference文档的Context组装规范：
         1. System 固定规则块（根据condition加载提示词）
-        2. State 动态状态块（preset JSON）
-        3. LTM 长时记忆摘要
-        4. Recent 近期对话
-        5. Current 用户消息
+        2. LTM 长时记忆摘要
+        3. Recent + Current 近期对话与当前用户消息
+        4. State 动态状态块（preset JSON）
         
         Returns:
             {
@@ -1220,7 +1237,7 @@ class AIService:
         """
         按固定顺序构建Context消息
         
-        顺序: System → State(preset) → LTM → Recent → Current
+        顺序: System → LTM → Recent/Current → State(preset)
         """
         api_messages = []
         
@@ -1234,22 +1251,15 @@ class AIService:
             "role": "system",
             "content": self._build_v2_output_contract_text()
         })
-        
-        # 2. State 动态状态块 (preset JSON)
-        state_json = preset.to_json()
-        api_messages.append({
-            "role": "system",
-            "content": f"【当前状态参数】\n{state_json}"
-        })
-        
-        # 3. LTM 长时记忆摘要
+
+        # 2. LTM 长时记忆摘要
         if ltm_summary:
             api_messages.append({
                 "role": "system",
                 "content": f"【关于这位用户的记忆】\n{ltm_summary}"
             })
         
-        # 4. Recent 近期对话 + Current 用户消息
+        # 3. Recent 近期对话 + Current 用户消息
         max_messages = self.context_config.get("max_messages", 80)
         image_rounds = self.context_config.get("image_rounds", 5)
         
@@ -1292,5 +1302,12 @@ class AIService:
                 api_messages.append({"role": role, "content": content_parts})
             else:
                 api_messages.append({"role": role, "content": content})
+
+        # 4. State 动态状态块 (preset JSON)
+        state_json = preset.to_json()
+        api_messages.append({
+            "role": "system",
+            "content": f"【当前状态参数】\n{state_json}"
+        })
         
         return api_messages

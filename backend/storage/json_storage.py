@@ -1036,6 +1036,7 @@ class JsonStorage:
         state["current_round_count"] = 0
         state["session_start_time"] = None
         state["last_user_message_time"] = None
+        state["checkin_eligible_last_message_time"] = None
         state["current_week_key"] = current_week
         return True
 
@@ -1056,6 +1057,7 @@ class JsonStorage:
                     "current_round_count": 0,
                     "last_user_message_time": None,
                     "session_start_time": None,
+                    "checkin_eligible_last_message_time": None,
                     "last_checkin_at": None,
                     "weekly_checkin_count": 0,
                     "weekly_survey_popup_shown": False,
@@ -1063,8 +1065,13 @@ class JsonStorage:
                 }
                 data["items"].append(state)
                 self._write_json_atomic_unlocked(path, data)
-            elif self._apply_weekly_reset_if_needed_unlocked(state, current_week):
-                self._write_json_atomic_unlocked(path, data)
+            else:
+                changed = self._apply_weekly_reset_if_needed_unlocked(state, current_week)
+                if "checkin_eligible_last_message_time" not in state:
+                    state["checkin_eligible_last_message_time"] = None
+                    changed = True
+                if changed:
+                    self._write_json_atomic_unlocked(path, data)
             return dict(state)
 
     def update_user_experiment_state(self, user_id: int, updates: Dict[str, Any]) -> Dict[str, Any]:
@@ -1083,6 +1090,7 @@ class JsonStorage:
                     "current_round_count": 0,
                     "last_user_message_time": None,
                     "session_start_time": None,
+                    "checkin_eligible_last_message_time": None,
                     "last_checkin_at": None,
                     "weekly_checkin_count": 0,
                     "weekly_survey_popup_shown": False,
@@ -1091,6 +1099,8 @@ class JsonStorage:
                 data["items"].append(state)
             else:
                 self._apply_weekly_reset_if_needed_unlocked(state, current_week)
+                if "checkin_eligible_last_message_time" not in state:
+                    state["checkin_eligible_last_message_time"] = None
             for k, v in updates.items():
                 state[k] = v
             self._write_json_atomic_unlocked(path, data)
@@ -1135,6 +1145,7 @@ class JsonStorage:
                 state["current_round_count"] = 0
                 state["session_start_time"] = None
                 state["last_user_message_time"] = None
+                state["checkin_eligible_last_message_time"] = None
                 if reset_checkins:
                     state["weekly_checkin_count"] = 0
                     state["weekly_survey_popup_shown"] = False

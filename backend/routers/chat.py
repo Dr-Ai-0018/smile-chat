@@ -20,7 +20,9 @@ CHINA_TZ = timezone(timedelta(hours=8))
 
 # 实验参数默认值（可被 settings.json 覆盖）
 MIN_USER_MESSAGE_LENGTH = int(os.getenv("MIN_USER_MESSAGE_LENGTH", "10"))
-ROUND_RESET_INTERVAL_MINUTES = int(os.getenv("ROUND_RESET_INTERVAL_MINUTES", "60"))
+ROUND_RESET_INTERVAL_MINUTES = int(os.getenv("ROUND_RESET_INTERVAL_MINUTES", "20"))
+MIN_ROUNDS_FOR_CHECKIN = int(os.getenv("MIN_ROUNDS_FOR_CHECKIN", "10"))
+CHECKIN_PENDING_EXPIRE_HOURS = int(os.getenv("CHECKIN_PENDING_EXPIRE_HOURS", "4"))
 
 def get_china_now() -> datetime:
     """获取中国时间"""
@@ -45,6 +47,7 @@ def _runtime_setting_int(key: str, default: int) -> int:
         return int(settings.get(key, default))
     except Exception:
         return default
+
 
 def register_request(user_id: int) -> asyncio.Event:
     """为用户注册一个新的取消事件，并中断旧请求"""
@@ -334,7 +337,16 @@ def _record_user_msg_time(user_id: int, user_msg_content: str, msg_time: datetim
     """收到用户消息时调用：判断间隔是否超时，超时则重置轮次；不累加轮次。"""
     state = storage.get_user_experiment_state(user_id)
     last_time_str = state.get("last_user_message_time")
-    round_reset_interval_minutes = _runtime_setting_int("round_reset_interval_minutes", ROUND_RESET_INTERVAL_MINUTES)
+    min_rounds_for_checkin = _runtime_setting_int("min_rounds_for_checkin", MIN_ROUNDS_FOR_CHECKIN)
+    pending_expire_hours = _runtime_setting_int(
+        "checkin_pending_expire_hours",
+        _runtime_setting_int("checkin_cooldown_hours", CHECKIN_PENDING_EXPIRE_HOURS),
+    )
+    pending_expire_minutes = max(1, pending_expire_hours * 60)
+    base_reset_minutes = max(1, min(_runtime_setting_int("round_reset_interval_minutes", ROUND_RESET_INTERVAL_MINUTES), 20))
+    round_count = int(state.get("current_round_count", 0) or 0)
+    # 达到可打卡条件后，轮次间隔窗口切换为 4 小时（优先级高于 20 分钟规则）
+    round_reset_interval_minutes = pending_expire_minutes if round_count >= min_rounds_for_checkin else base_reset_minutes
 
     if last_time_str:
         try:
@@ -348,6 +360,7 @@ def _record_user_msg_time(user_id: int, user_msg_content: str, msg_time: datetim
                     "current_round_count": 0,
                     "session_start_time": msg_time.isoformat(),
                     "last_user_message_time": msg_time.isoformat(),
+                    "checkin_eligible_last_message_time": None,
                 })
                 return
         except Exception:
@@ -358,6 +371,9 @@ def _record_user_msg_time(user_id: int, user_msg_content: str, msg_time: datetim
     updates = {"last_user_message_time": msg_time.isoformat()}
     if not state.get("session_start_time"):
         updates["session_start_time"] = msg_time.isoformat()
+    if round_count >= min_rounds_for_checkin:
+        # 用于“可打卡但未打卡超过 4 小时自动失效”的计时锚点
+        updates["checkin_eligible_last_message_time"] = msg_time.isoformat()
     storage.update_user_experiment_state(user_id, updates)
 
 
@@ -368,7 +384,13 @@ def _increment_round_count(user_id: int, user_msg_content: str, msg_time: dateti
         return
     state = storage.get_user_experiment_state(user_id)
     new_count = state.get("current_round_count", 0) + 1
-    storage.update_user_experiment_state(user_id, {"current_round_count": new_count})
+    min_rounds_for_checkin = _runtime_setting_int("min_rounds_for_checkin", MIN_ROUNDS_FOR_CHECKIN)
+    updates = {"current_round_count": new_count}
+    if new_count >= min_rounds_for_checkin:
+        updates["checkin_eligible_last_message_time"] = msg_time.isoformat()
+    else:
+        updates["checkin_eligible_last_message_time"] = None
+    storage.update_user_experiment_state(user_id, updates)
 
 
 # 保留旧名称供外部兼容（实际已不使用）

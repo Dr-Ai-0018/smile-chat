@@ -21,12 +21,18 @@ def get_china_now() -> datetime:
 @dataclass
 class SessionPreset:
     """动态状态参数（传给LLM的preset）"""
-    recent_self_disclosure_rate: float  # 最近5条assistant中触发表露的比例
-    last_relationship_stage: str  # 上一轮关系阶段 A/B/C
+    recent_self_disclosure_rate: float  # 最近5轮中自我表露比例
+    recent_self_disclosure_count_in_last_5: int  # 最近5轮中自我表露次数
+    recent_self_disclosure_window_size: int  # 最近统计窗口大小（<=5）
+    relationship_stage_judge: str  # 上一轮关系阶段 A/B/C（供下一轮参考）
+    last_relationship_stage: str  # 兼容字段：同 relationship_stage_judge
     conversation_duration_min: int  # 本轮对话持续分钟数
+    conversation_duration_human: str  # 本轮对话持续时长（自然表达）
     local_time_bucket: str  # morning/afternoon/evening/late_night
     turn_count: int  # 本会话轮次
     time_since_last_chat: int = 0  # 距上次完整会话结束的分钟数
+    time_since_last_chat_human: str = "0分钟"  # 距上次完整会话结束时长（自然表达）
+    timezone: str = "UTC+8"  # 统一时区标识
     
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -67,8 +73,8 @@ class SessionStateService:
         """
         session = self.get_or_create_session(user_id)
 
-        # 1. 计算 recent_self_disclosure_rate（从聊天历史读取）
-        disclosure_rate = self._compute_disclosure_rate(user_id)
+        # 1. 计算最近5轮自我表露统计（从聊天历史读取）
+        disclosure_count, disclosure_window_size, disclosure_rate = self._compute_disclosure_stats(user_id)
 
         # 2. 获取 last_relationship_stage（从聊天历史最近一条 assistant 消息读取）
         last_stage = self._get_last_relationship_stage(user_id) or session.get("last_relationship_stage", "A")
@@ -87,11 +93,12 @@ class SessionStateService:
                 if start_time.tzinfo is None:
                     start_time = start_time.replace(tzinfo=CHINA_TZ)
                 duration = (get_china_now() - start_time).total_seconds() / 60
-                duration_min = int(duration // 5) * 5
+                duration_min = max(0, int(duration))
             except Exception:
                 duration_min = 0
         else:
             duration_min = 0
+        duration_human = self._humanize_minutes(duration_min)
 
         # local_time_bucket
         time_bucket = self._get_time_bucket()
@@ -106,19 +113,25 @@ class SessionStateService:
                 last_end_time = datetime.fromisoformat(last_end_str)
                 if last_end_time.tzinfo is None:
                     last_end_time = last_end_time.replace(tzinfo=CHINA_TZ)
-                time_since = int((get_china_now() - last_end_time).total_seconds() / 60)
+                time_since = max(0, int((get_china_now() - last_end_time).total_seconds() / 60))
             except Exception:
                 time_since = 0
         else:
             time_since = 0
+        time_since_human = self._humanize_minutes(time_since)
 
         return SessionPreset(
             recent_self_disclosure_rate=disclosure_rate,
+            recent_self_disclosure_count_in_last_5=disclosure_count,
+            recent_self_disclosure_window_size=disclosure_window_size,
+            relationship_stage_judge=last_stage,
             last_relationship_stage=last_stage,
             conversation_duration_min=duration_min,
+            conversation_duration_human=duration_human,
             local_time_bucket=time_bucket,
             turn_count=turn_count,
             time_since_last_chat=time_since,
+            time_since_last_chat_human=time_since_human,
         )
     
     def _get_last_relationship_stage(self, user_id: int) -> Optional[str]:
@@ -131,8 +144,8 @@ class SessionStateService:
                     return stage
         return None
 
-    def _compute_disclosure_rate(self, user_id: int) -> float:
-        """计算最近5轮对话的自我表露率（每轮取最后一条assistant消息）"""
+    def _compute_disclosure_stats(self, user_id: int) -> tuple[int, int, float]:
+        """计算最近5轮对话的自我表露统计（次数/窗口/比例）"""
         history = self.storage.get_chat_history(user_id=user_id, limit=40)
 
         # 按轮次分组：每遇到 user 消息开启新轮，收集该轮所有 assistant 消息
@@ -151,14 +164,34 @@ class SessionStateService:
         # 取最近5轮，每轮用最后一条 assistant 消息
         recent_5 = [r[-1] for r in rounds[-5:]]
         if not recent_5:
-            return 0.0
+            return 0, 0, 0.0
 
         disclosure_count = sum(
             1 for m in recent_5
             if m.get("meta", {}).get("did_self_disclosure", False)
             or m.get("meta", {}).get("self_disclosure_triggered", False)
         )
-        return disclosure_count / len(recent_5)
+        window_size = len(recent_5)
+        return disclosure_count, window_size, disclosure_count / window_size
+
+    def _humanize_minutes(self, minutes: int) -> str:
+        minutes = max(0, int(minutes))
+        if minutes <= 0:
+            return "0分钟"
+        if minutes < 60:
+            return f"{minutes}分钟"
+        if minutes < 1440:
+            hours, remain = divmod(minutes, 60)
+            if remain == 0:
+                return f"{hours}小时"
+            return f"{hours}小时{remain}分钟"
+        days, remain_minutes = divmod(minutes, 1440)
+        hours, remain = divmod(remain_minutes, 60)
+        if hours == 0 and remain == 0:
+            return f"{days}天"
+        if remain == 0:
+            return f"{days}天{hours}小时"
+        return f"{days}天{hours}小时{remain}分钟"
     
     def _get_time_bucket(self) -> str:
         """获取当前时间段 - 使用中国时间"""

@@ -25,6 +25,7 @@ def get_current_week_key() -> str:
 # 实验参数默认值（可被 settings.json 覆盖）
 MIN_ROUNDS_FOR_CHECKIN = int(os.getenv("MIN_ROUNDS_FOR_CHECKIN", "10"))
 CHECKIN_COOLDOWN_HOURS = int(os.getenv("CHECKIN_COOLDOWN_HOURS", "4"))
+CHECKIN_PENDING_EXPIRE_HOURS = int(os.getenv("CHECKIN_PENDING_EXPIRE_HOURS", "4"))
 MIN_WEEKLY_CHECKINS_FOR_SURVEY = int(os.getenv("MIN_WEEKLY_CHECKINS_FOR_SURVEY", "2"))
 
 DEFAULT_QUESTIONS = [
@@ -50,6 +51,58 @@ def _runtime_setting_int(key: str, default: int) -> int:
         return value
     except Exception:
         return default
+
+
+def _parse_iso_with_tz(value: Optional[str]) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(value)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=CHINA_TZ)
+        return dt
+    except Exception:
+        return None
+
+
+def _cleanup_expired_pending_checkin(user_id: int, state: dict) -> dict:
+    """
+    可打卡但未打卡超时后，自动清理轮次累计。
+
+    规则：
+    - 仅当已达到可打卡轮数阈值时才检查
+    - 从「可打卡状态下最后一条消息时间」开始计时
+    - 超过 4 小时（可配置）后清零 current_round_count
+    """
+    min_rounds_for_checkin = _runtime_setting_int("min_rounds_for_checkin", MIN_ROUNDS_FOR_CHECKIN)
+    pending_expire_hours = _runtime_setting_int(
+        "checkin_pending_expire_hours",
+        _runtime_setting_int("checkin_cooldown_hours", CHECKIN_PENDING_EXPIRE_HOURS),
+    )
+    round_count = int(state.get("current_round_count", 0) or 0)
+    if round_count < min_rounds_for_checkin:
+        return state
+
+    anchor = _parse_iso_with_tz(
+        state.get("checkin_eligible_last_message_time")
+        or state.get("last_user_message_time")
+    )
+    if anchor is None:
+        return state
+
+    expire_seconds = max(1, pending_expire_hours * 3600)
+    elapsed_seconds = (get_china_now() - anchor).total_seconds()
+    if elapsed_seconds <= expire_seconds:
+        return state
+
+    return storage.update_user_experiment_state(
+        user_id,
+        {
+            "current_round_count": 0,
+            "session_start_time": None,
+            "checkin_eligible_last_message_time": None,
+        },
+    )
 
 
 def _can_checkin(state: dict) -> tuple[bool, int]:
@@ -80,6 +133,7 @@ def _can_checkin(state: dict) -> tuple[bool, int]:
 async def get_checkin_status(user_id: int = Depends(get_current_user)):
     """获取当前打卡状态"""
     state = storage.get_user_experiment_state(user_id)
+    state = _cleanup_expired_pending_checkin(user_id, state)
     can, cooldown = _can_checkin(state)
     sync_weekly_survey_records_for_user(user_id)
 
@@ -104,6 +158,7 @@ async def submit_checkin(
 ):
     """提交打卡"""
     state = storage.get_user_experiment_state(user_id)
+    state = _cleanup_expired_pending_checkin(user_id, state)
     can, _ = _can_checkin(state)
     if not can:
         raise HTTPException(status_code=400, detail="当前不满足打卡条件")
@@ -135,6 +190,7 @@ async def submit_checkin(
         "last_checkin_at": now.isoformat(),
         "weekly_checkin_count": state.get("weekly_checkin_count", 0) + 1,
         "session_start_time": None,
+        "checkin_eligible_last_message_time": None,
     })
     weekly_records = sync_weekly_survey_records_for_user(user_id)
     current_week_record = next((item for item in weekly_records if item.get("week_key") == week_key), None)
