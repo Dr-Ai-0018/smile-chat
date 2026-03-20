@@ -595,6 +595,18 @@ const scrollToBottom = () => {
   })
 }
 
+// 同步移动端可视区高度，降低软键盘导致 100vh 错位
+const updateViewportHeight = () => {
+  if (typeof window === 'undefined') return
+  const viewportHeight = window.visualViewport?.height || window.innerHeight
+  document.documentElement.style.setProperty('--app-height', `${Math.round(viewportHeight)}px`)
+}
+
+const handleViewportChange = () => {
+  updateViewportHeight()
+  scrollToBottom()
+}
+
 // 显示关于
 const showAbout = () => {
   showMenu.value = false
@@ -853,6 +865,11 @@ const detachGlobalListeners = () => {
 }
 
 onMounted(async () => {
+  updateViewportHeight()
+  window.addEventListener('resize', handleViewportChange)
+  window.visualViewport?.addEventListener('resize', handleViewportChange)
+  window.visualViewport?.addEventListener('scroll', handleViewportChange)
+
   // 并行加载历史和同步头像
   await Promise.all([loadHistory(), syncUserAvatar()])
   // 初始化打卡状态和通知
@@ -863,6 +880,7 @@ onMounted(async () => {
 })
 
 onActivated(() => {
+  updateViewportHeight()
   attachGlobalListeners()
   scrollToBottom()
   if (isPageVisible()) {
@@ -879,6 +897,9 @@ onUnmounted(() => {
   if (currentAbortController) {
     currentAbortController.abort()
   }
+  window.removeEventListener('resize', handleViewportChange)
+  window.visualViewport?.removeEventListener('resize', handleViewportChange)
+  window.visualViewport?.removeEventListener('scroll', handleViewportChange)
   detachGlobalListeners()
 })
 </script>
@@ -888,9 +909,11 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   height: 100vh;
+  height: 100dvh;
+  height: var(--app-height);
   background: var(--color-bg);
   overflow: hidden;
-  max-width: 50%;
+  width: min(100%, 960px);
   min-width: 800px;
   margin: 0 auto;
 }
@@ -898,7 +921,7 @@ onUnmounted(() => {
 /* 顶部标题栏 */
 .chat-header {
   background: var(--color-primary);
-  padding: 1rem 1.5rem;
+  padding: calc(1rem + var(--safe-area-top)) calc(1.5rem + var(--safe-area-right)) 1rem calc(1.5rem + var(--safe-area-left));
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -975,6 +998,8 @@ onUnmounted(() => {
   left: -300px;
   width: 280px;
   height: 100vh;
+  height: 100dvh;
+  height: var(--app-height);
   background: white;
   box-shadow: 2px 0 10px rgba(0, 0, 0, 0.1);
   transition: left 0.3s;
@@ -997,7 +1022,7 @@ onUnmounted(() => {
 
 .sidebar-header {
   background: var(--color-primary);
-  padding: 1rem 1.5rem;
+  padding: calc(1rem + var(--safe-area-top)) calc(1.5rem + var(--safe-area-right)) 1rem calc(1.5rem + var(--safe-area-left));
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -1042,6 +1067,8 @@ onUnmounted(() => {
   padding: 1.5rem;
   background: var(--color-bg);
   min-height: 0;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
 }
 
 .empty-state {
@@ -1347,6 +1374,9 @@ onUnmounted(() => {
 /* 输入区域 */
 .chat-input-area {
   padding: 1.5rem;
+  padding-right: calc(1.5rem + var(--safe-area-right));
+  padding-bottom: calc(1.5rem + var(--safe-area-bottom));
+  padding-left: calc(1.5rem + var(--safe-area-left));
   background: white;
   border-top: 3px solid var(--color-primary);
   position: relative;
@@ -1618,8 +1648,20 @@ onUnmounted(() => {
 /* 移动端适配 */
 @media (max-width: 768px) {
   .chat-page {
-    max-width: 100%;
-    min-width: 100%;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .chat-header {
+    padding: calc(0.875rem + var(--safe-area-top)) calc(0.875rem + var(--safe-area-right)) 0.875rem calc(0.875rem + var(--safe-area-left));
+  }
+
+  .header-right {
+    gap: 2px;
+  }
+
+  .checkin-btn {
+    padding: 4px 8px;
   }
   
   .image-message {
@@ -1631,8 +1673,15 @@ onUnmounted(() => {
     max-width: 300px;
   }
   
+  .chat-messages {
+    padding: 1rem 0.875rem;
+  }
+
   .chat-input-area {
     padding: 1rem 0.75rem;
+    padding-right: calc(0.75rem + var(--safe-area-right));
+    padding-bottom: calc(1rem + var(--safe-area-bottom));
+    padding-left: calc(0.75rem + var(--safe-area-left));
   }
   
   .input-container {
@@ -1653,14 +1702,31 @@ onUnmounted(() => {
   }
   
   .message-body {
-    max-width: 80%;
+    max-width: min(84vw, 80%);
+    padding-bottom: 10px;
+    padding-right: 10px;
   }
 }
 
 /* 窄屏手机适配 */
 @media (max-width: 400px) {
+  .chat-header {
+    padding: calc(0.75rem + var(--safe-area-top)) calc(0.625rem + var(--safe-area-right)) 0.75rem calc(0.625rem + var(--safe-area-left));
+  }
+
+  .title {
+    font-size: 1.2rem;
+  }
+
+  .chat-messages {
+    padding: 0.875rem 0.625rem;
+  }
+
   .chat-input-area {
     padding: 0.75rem 0.5rem;
+    padding-right: calc(0.5rem + var(--safe-area-right));
+    padding-bottom: calc(0.75rem + var(--safe-area-bottom));
+    padding-left: calc(0.5rem + var(--safe-area-left));
   }
   
   .input-container {
@@ -1688,7 +1754,7 @@ onUnmounted(() => {
   }
   
   .message-body {
-    max-width: 85%;
+    max-width: calc(100vw - 92px);
   }
   
   .message-content {
