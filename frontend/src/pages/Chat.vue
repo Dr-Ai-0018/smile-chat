@@ -261,6 +261,7 @@ const unreadNoticeCount = computed(() =>
   inboxNotices.value.filter(n => !n.read_at).length
 )
 let globalListenersAttached = false
+let viewportListenersAttached = false
 
 const isPageVisible = () => {
   if (typeof document === 'undefined') return true
@@ -607,6 +608,22 @@ const handleViewportChange = () => {
   scrollToBottom()
 }
 
+const attachViewportListeners = () => {
+  if (viewportListenersAttached || typeof window === 'undefined') return
+  window.addEventListener('resize', handleViewportChange)
+  window.visualViewport?.addEventListener('resize', handleViewportChange)
+  window.visualViewport?.addEventListener('scroll', handleViewportChange)
+  viewportListenersAttached = true
+}
+
+const detachViewportListeners = () => {
+  if (!viewportListenersAttached || typeof window === 'undefined') return
+  window.removeEventListener('resize', handleViewportChange)
+  window.visualViewport?.removeEventListener('resize', handleViewportChange)
+  window.visualViewport?.removeEventListener('scroll', handleViewportChange)
+  viewportListenersAttached = false
+}
+
 // 显示关于
 const showAbout = () => {
   showMenu.value = false
@@ -866,9 +883,7 @@ const detachGlobalListeners = () => {
 
 onMounted(async () => {
   updateViewportHeight()
-  window.addEventListener('resize', handleViewportChange)
-  window.visualViewport?.addEventListener('resize', handleViewportChange)
-  window.visualViewport?.addEventListener('scroll', handleViewportChange)
+  attachViewportListeners()
 
   // 并行加载历史和同步头像
   await Promise.all([loadHistory(), syncUserAvatar()])
@@ -881,6 +896,7 @@ onMounted(async () => {
 
 onActivated(() => {
   updateViewportHeight()
+  attachViewportListeners()
   attachGlobalListeners()
   scrollToBottom()
   if (isPageVisible()) {
@@ -889,6 +905,7 @@ onActivated(() => {
 })
 
 onDeactivated(() => {
+  detachViewportListeners()
   detachGlobalListeners()
 })
 
@@ -897,9 +914,7 @@ onUnmounted(() => {
   if (currentAbortController) {
     currentAbortController.abort()
   }
-  window.removeEventListener('resize', handleViewportChange)
-  window.visualViewport?.removeEventListener('resize', handleViewportChange)
-  window.visualViewport?.removeEventListener('scroll', handleViewportChange)
+  detachViewportListeners()
   detachGlobalListeners()
 })
 </script>

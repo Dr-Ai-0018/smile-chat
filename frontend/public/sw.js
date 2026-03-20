@@ -1,4 +1,4 @@
-const CACHE_NAME = 'qiming-pwa-v1'
+const CACHE_NAME = 'qiming-pwa-v2'
 const APP_SHELL = [
   '/',
   '/chat',
@@ -6,8 +6,10 @@ const APP_SHELL = [
   '/register',
   '/settings',
   '/manifest.webmanifest',
-  '/pwa-icon.svg',
-  '/pwa-maskable.svg',
+  '/apple-touch-icon.png',
+  '/pwa-192.png',
+  '/pwa-512.png',
+  '/pwa-512-maskable.png',
   '/favicon.svg'
 ]
 

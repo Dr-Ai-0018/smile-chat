@@ -42,10 +42,18 @@ const app = createApp(App)
 app.use(router)
 app.mount('#app')
 
-if ('serviceWorker' in navigator) {
+if (import.meta.env.PROD && 'serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('/sw.js').catch((err) => {
       console.warn('Service worker 注册失败:', err)
     })
   })
+} else if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.getRegistrations().then((registrations) => {
+    registrations
+      .filter((registration) => registration.active?.scriptURL?.includes('/sw.js'))
+      .forEach((registration) => {
+        registration.unregister().catch(() => {})
+      })
+  }).catch(() => {})
 }
