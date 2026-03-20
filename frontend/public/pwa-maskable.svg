@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" fill="#FDD152"/>
+  <circle cx="256" cy="220" r="132" fill="#FFFFFF" stroke="#000000" stroke-width="18"/>
+  <path d="M256 94l22 68h72l-58 42 22 68-58-42-58 42 22-68-58-42h72z" fill="#F4A500" stroke="#000" stroke-width="12" stroke-linejoin="round"/>
+  <text x="256" y="400" text-anchor="middle" font-family="'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="68" font-weight="700" fill="#000000">启明</text>
+</svg>
