@@ -1,12 +1,18 @@
 """
 JWT令牌工具
 """
+import os
+import secrets
 from datetime import datetime, timedelta, timezone
 from jose import JWTError, jwt
 from typing import Optional
 
 # JWT配置
-SECRET_KEY = "your-secret-key-change-this-in-production-123456789"
+SECRET_KEY = (os.getenv("SECRET_KEY") or "").strip()
+if not SECRET_KEY:
+    # Fall back to a per-process random key so the repo never ships a shared signing secret.
+    SECRET_KEY = secrets.token_urlsafe(32)
+    print("WARNING: SECRET_KEY is not set; using an ephemeral key. Tokens will become invalid after restart.")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7天
 CHINA_TZ = timezone(timedelta(hours=8))

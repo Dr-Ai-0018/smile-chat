@@ -108,6 +108,7 @@ AI 通道配置文件位于：
 推荐通过环境变量提供实际密钥和模型配置，例如：
 
 ```env
+SECRET_KEY=replace-this-with-a-long-random-secret
 AI_PRIMARY_KEY=your_api_key
 AI_PRIMARY_BASE_URL=https://api.openai.com/v1
 AI_PRIMARY_MODEL=gpt-4.1-mini
@@ -140,13 +141,13 @@ VITE_API_URL=http://localhost:8000/api
 后端 CORS 现在由环境变量控制：
 
 ```env
-CORS_ALLOW_ORIGINS=https://chat.example.com,https://api.example.com
-CORS_ALLOW_ORIGIN_REGEX=^https?://(localhost|127\\.0\\.0\\.1)(:\\d+)?$
+CORS_ALLOW_ORIGINS=https://chat.example.com,https://admin.example.com
+CORS_ALLOW_ORIGIN_REGEX=^https?://(localhost|127\.0\.0\.1)(:\d+)?$
 ```
 
 说明：
 
-- `CORS_ALLOW_ORIGINS` 用于生产域名，多个域名用英文逗号分隔
+- `CORS_ALLOW_ORIGINS` 用于生产域名，多个域名用英文逗号分隔；请替换成你自己的前端域名，不要把真实线上域名直接提交进仓库
 - `CORS_ALLOW_ORIGIN_REGEX` 默认放行本地开发常见来源（`localhost` / `127.0.0.1` 任意端口）
 - 批量导出 ZIP 需要浏览器能读到 `Content-Disposition`，后端已经暴露该响应头；如果导出失败，优先检查前端当前来源是否被上面的 CORS 配置允许
 

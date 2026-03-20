@@ -1,4 +1,13 @@
 /zip/
+.codex-backup/
+*.bundle
+
+.env
+.env.*
+!.env.example
+!**/.env.example
+backend/.env
+frontend/.env
 
 memory/
 

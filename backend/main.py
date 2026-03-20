@@ -23,12 +23,7 @@ from utils.password import hash_password
 from storage import JsonStorage
 
 
-DEFAULT_CORS_ALLOW_ORIGINS = [
-    "https://chat.example.com",
-    "http://chat.example.com",
-    "https://api.example.com",
-    "http://api.example.com",
-]
+DEFAULT_CORS_ALLOW_ORIGINS = []
 DEFAULT_CORS_ALLOW_ORIGIN_REGEX = r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$"
 
 
