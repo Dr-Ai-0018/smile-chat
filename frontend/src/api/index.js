@@ -101,6 +101,8 @@ export const adminAPI = {
     const suffix = query.toString() ? `?${query.toString()}` : ''
     return client.get(`/admin/user/${userId}/detail${suffix}`)
   },
+  updateUserCondition: (userId, condition) =>
+    client.put(`/admin/user/${userId}/condition`, { condition }),
   exportUsers: (userIds) => client.post('/admin/users/export', { user_ids: userIds }),
   exportUsersZip: (userIds) => {
     const token = localStorage.getItem('token')

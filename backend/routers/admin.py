@@ -31,6 +31,7 @@ from services.memory_service import get_memory_service
 from services.ai_service import AIService
 from services.prompt_manager import get_prompt_manager
 from services.chat_logger import get_chat_logger
+from services.session_state import get_session_state
 from services.weekly_survey_service import sync_weekly_survey_records_for_user
 
 router = APIRouter()
@@ -39,6 +40,7 @@ memory_service = get_memory_service()
 ai_service = AIService()
 prompt_manager = get_prompt_manager()
 chat_logger = get_chat_logger()
+session_state = get_session_state()
 
 MEMORY_BASE_PATH = Path(__file__).parent.parent.parent / "memory" / "本体"
 MEMORY_BACKUP_BASE_PATH = Path(__file__).parent.parent.parent / "memory" / "备份" / "用户记忆"
@@ -1042,6 +1044,35 @@ async def update_all_settings(
 
 class SystemPromptUpdateRequest(PydanticBaseModel):
     content: str
+
+
+class UserConditionUpdateRequest(PydanticBaseModel):
+    condition: str
+
+
+@router.put("/user/{user_id}/condition")
+async def update_user_condition(
+    user_id: int,
+    request: UserConditionUpdateRequest,
+    admin_id: int = Depends(is_admin),
+):
+    """管理员手动调整指定用户的系统提示词条件。只影响当前用户，不改变后续新用户分配逻辑。"""
+    user = storage.get_user_by_id(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="用户不存在")
+
+    condition = (request.condition or "").strip()
+    if condition not in CONDITION_FILES:
+        raise HTTPException(status_code=400, detail="无效的提示词条件")
+
+    session_state.set_condition(user_id, condition)
+    updated_user = storage.get_user_by_id(user_id) or user
+    return {
+        "message": "用户系统提示词条件已更新",
+        "user_id": user_id,
+        "username": updated_user.get("username"),
+        "condition": updated_user.get("self_disclosure_condition", condition),
+    }
 
 
 @router.get("/system-prompts")

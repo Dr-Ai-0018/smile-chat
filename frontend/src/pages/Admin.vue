@@ -900,6 +900,23 @@
                     {{ formatCondition(userDetail.metrics?.condition || selectedUser?.condition) }}
                   </span>
                 </div>
+                <div class="user-condition-editor">
+                  <label>
+                    <span>手动调整系统提示词</span>
+                    <select v-model="selectedUserCondition">
+                      <option v-for="option in fixedConditionOptions" :key="option.value" :value="option.value">
+                        {{ option.label }}
+                      </option>
+                    </select>
+                  </label>
+                  <button
+                    class="mini-action-btn"
+                    @click="saveSelectedUserCondition"
+                    :disabled="savingUserCondition || !selectedUser || selectedUserCondition === (selectedUser?.condition || 'none')"
+                  >
+                    {{ savingUserCondition ? '保存中...' : '保存' }}
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -1491,6 +1508,8 @@ const exportErrorMessage = ref('')
 // 用户详情弹窗
 const showUserModal = ref(false)
 const selectedUser = ref(null)
+const selectedUserCondition = ref('none')
+const savingUserCondition = ref(false)
 const userHistory = ref([])
 const userDetail = ref({
   metrics: {},
@@ -2063,6 +2082,7 @@ const copyCode = (code) => {
 
 const viewUserDetail = async (user) => {
   selectedUser.value = user
+  selectedUserCondition.value = user?.condition || 'none'
   showUserModal.value = true
   
   try {
@@ -2073,6 +2093,7 @@ const viewUserDetail = async (user) => {
       message_count: res.metrics?.message_count ?? selectedUser.value?.message_count,
       condition: res.metrics?.condition ?? selectedUser.value?.condition,
     }
+    selectedUserCondition.value = res.metrics?.condition ?? res.user?.condition ?? selectedUser.value?.condition ?? 'none'
     userHistory.value = res.history || []
     userDetail.value = {
       metrics: res.metrics || {},
@@ -2084,6 +2105,33 @@ const viewUserDetail = async (user) => {
   } catch (err) {
     console.error('加载聊天记录失败:', err)
     toast.error('加载用户详情失败')
+  }
+}
+
+const saveSelectedUserCondition = async () => {
+  if (!selectedUser.value) return
+  savingUserCondition.value = true
+  try {
+    const res = await adminAPI.updateUserCondition(selectedUser.value.id, selectedUserCondition.value)
+    const nextCondition = res.condition || selectedUserCondition.value
+    selectedUser.value = {
+      ...selectedUser.value,
+      condition: nextCondition,
+    }
+    userDetail.value = {
+      ...userDetail.value,
+      metrics: {
+        ...(userDetail.value.metrics || {}),
+        condition: nextCondition,
+      },
+    }
+    toast.success('该被试的系统提示词条件已更新')
+    await Promise.all([loadUsers(), loadStats(), loadDetailedStats()])
+  } catch (err) {
+    console.error('更新用户提示词条件失败:', err)
+    toast.error(err.response?.data?.detail || '更新失败')
+  } finally {
+    savingUserCondition.value = false
   }
 }
 
@@ -4543,6 +4591,52 @@ onUnmounted(() => {
 .user-hero-meta {
   font-size: 0.82rem;
   color: rgba(255, 255, 255, 0.55);
+}
+
+.user-condition-editor {
+  margin-top: 0.8rem;
+  display: flex;
+  align-items: end;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.user-condition-editor label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.78rem;
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.user-condition-editor select {
+  min-width: 180px;
+  padding: 0.45rem 0.65rem;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(15, 23, 42, 0.82);
+  color: #fff;
+}
+
+.mini-action-btn {
+  border: 1px solid rgba(250, 204, 21, 0.28);
+  background: rgba(250, 204, 21, 0.14);
+  color: #fde68a;
+  border-radius: 8px;
+  padding: 0.48rem 0.9rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.mini-action-btn:hover:not(:disabled) {
+  background: rgba(250, 204, 21, 0.22);
+}
+
+.mini-action-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .user-metrics-grid {
