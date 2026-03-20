@@ -138,6 +138,9 @@ onMounted(() => {
   align-items: center;
   justify-content: center;
   min-height: 100vh;
+  min-height: 100dvh;
+  min-height: var(--app-height);
+  padding: calc(1.25rem + var(--safe-area-top)) calc(1rem + var(--safe-area-right)) calc(1.25rem + var(--safe-area-bottom)) calc(1rem + var(--safe-area-left));
   background: linear-gradient(135deg, var(--color-accent) 0%, var(--color-light) 100%);
 }
 
@@ -198,5 +201,46 @@ button {
   color: #c00;
   border-radius: 8px;
   text-align: center;
+}
+
+@media (max-width: 768px) {
+  .register-page {
+    align-items: stretch;
+    padding: calc(1rem + var(--safe-area-top)) calc(0.875rem + var(--safe-area-right)) calc(1rem + var(--safe-area-bottom)) calc(0.875rem + var(--safe-area-left));
+  }
+
+  .register-card {
+    max-width: none;
+    margin: auto 0;
+    padding: 2rem 1.25rem;
+    border-radius: 20px;
+  }
+
+  h1 {
+    font-size: 1.7rem;
+  }
+
+  .subtitle {
+    margin-bottom: 1.5rem;
+  }
+
+  .form-group {
+    margin-bottom: 1rem;
+  }
+
+  input,
+  button {
+    min-height: 48px;
+  }
+}
+
+@media (max-width: 400px) {
+  .register-card {
+    padding: 1.5rem 1rem;
+  }
+
+  h1 {
+    font-size: 1.5rem;
+  }
 }
 </style>
