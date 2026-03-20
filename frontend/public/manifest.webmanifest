@@ -1,0 +1,25 @@
+{
+  "name": "启明",
+  "short_name": "启明",
+  "description": "启明聊天移动端 PWA，可添加到桌面并以接近全屏方式使用。",
+  "start_url": "/chat",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#FFF7D6",
+  "theme_color": "#FDD152",
+  "lang": "zh-CN",
+  "icons": [
+    {
+      "src": "/pwa-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    },
+    {
+      "src": "/pwa-maskable.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
