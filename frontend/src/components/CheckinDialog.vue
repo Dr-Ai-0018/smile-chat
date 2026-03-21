@@ -11,8 +11,8 @@
           <div v-for="(q, i) in questions" :key="i" class="question-item">
             <p class="q-title">{{ i + 1 }}. {{ q }}</p>
             <div class="scale-anchors">
-              <span>完全不同意 (1)</span>
-              <span>完全同意 (7)</span>
+              <span>完全没有 (1)</span>
+              <span>极其强烈 (7)</span>
             </div>
             <div class="scale-options">
               <label v-for="n in 7" :key="n">

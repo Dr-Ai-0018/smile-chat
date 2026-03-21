@@ -1038,7 +1038,19 @@
                       <td>{{ formatTime(record.created_at) }}</td>
                       <td>{{ record.week_key }}</td>
                       <td>{{ record.round_count_at_checkin }}</td>
-                      <td class="wide-cell">{{ formatCheckinAnswers(record) }}</td>
+                      <td class="wide-cell checkin-answer-cell">
+                        <div v-if="getCheckinAnswerItems(record).length > 0" class="checkin-answer-list">
+                          <div
+                            v-for="item in getCheckinAnswerItems(record)"
+                            :key="`${record.id}-${item.key}`"
+                            class="checkin-answer-item"
+                          >
+                            <span class="checkin-answer-question">{{ item.label }}</span>
+                            <span class="checkin-answer-score">{{ item.value }}</span>
+                          </div>
+                        </div>
+                        <span v-else class="checkin-answer-empty">-</span>
+                      </td>
                     </tr>
                   </tbody>
                 </table>
@@ -2476,19 +2488,33 @@ const formatLatency = (value) => {
   return `${Math.round(n)} ms`
 }
 
-const formatCheckinAnswers = (record) => {
+const getCheckinAnswerItems = (record) => {
   const target = record && typeof record === 'object' && 'answers' in record ? record : { answers: record }
   const answers = target?.answers
-  if (!answers || typeof answers !== 'object') return '-'
+  if (!answers || typeof answers !== 'object') return []
 
   const questions = Array.isArray(target?.questions_snapshot) ? target.questions_snapshot : []
   if (questions.length > 0) {
     return questions
-      .map((question, index) => `${index + 1}. ${question}：${answers[`q${index}`] ?? '-'}`)
-      .join('  /  ')
+      .map((question, index) => ({
+        key: `q${index}`,
+        label: `${index + 1}. ${question}`,
+        value: answers[`q${index}`] ?? '-',
+      }))
   }
 
-  return Object.entries(answers).map(([key, value]) => `${key}:${value}`).join('  ')
+  return Object.entries(answers)
+    .sort(([a], [b]) => {
+      const ai = Number(String(a).replace(/[^0-9]/g, ''))
+      const bi = Number(String(b).replace(/[^0-9]/g, ''))
+      if (!Number.isNaN(ai) && !Number.isNaN(bi)) return ai - bi
+      return String(a).localeCompare(String(b))
+    })
+    .map(([key, value], idx) => ({
+      key,
+      label: `${idx + 1}. ${key}`,
+      value: value ?? '-',
+    }))
 }
 
 const formatWeeklySurveyStatus = (status) => {
@@ -3617,6 +3643,49 @@ onUnmounted(() => {
 .wide-cell {
   max-width: 320px;
   word-break: break-word;
+}
+
+.checkin-answer-cell {
+  min-width: 420px;
+}
+
+.checkin-answer-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.checkin-answer-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.4rem 0.55rem;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.checkin-answer-question {
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 0.8rem;
+  line-height: 1.35;
+}
+
+.checkin-answer-score {
+  min-width: 28px;
+  text-align: center;
+  padding: 0.2rem 0.45rem;
+  border-radius: 999px;
+  background: rgba(250, 204, 21, 0.16);
+  border: 1px solid rgba(250, 204, 21, 0.42);
+  color: #fde68a;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.checkin-answer-empty {
+  color: rgba(255, 255, 255, 0.5);
 }
 
 /* User Info Grid */
