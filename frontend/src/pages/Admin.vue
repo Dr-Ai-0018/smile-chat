@@ -2916,9 +2916,17 @@ onUnmounted(() => {
 
 <style scoped>
 .admin-page {
+  display: flex;
+  flex-direction: column;
   min-height: 100vh;
+  min-height: 100dvh;
+  min-height: var(--app-height);
+  height: 100vh;
+  height: 100dvh;
+  height: var(--app-height);
   background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
   color: #fff;
+  overflow: hidden;
 }
 
 /* Header */
@@ -2930,6 +2938,7 @@ onUnmounted(() => {
   justify-content: space-between;
   border-bottom: 1px solid rgba(255, 255, 255, 0.1);
   backdrop-filter: blur(10px);
+  flex-shrink: 0;
 }
 
 .header-left {
@@ -2986,6 +2995,7 @@ onUnmounted(() => {
   background: rgba(0, 0, 0, 0.2);
   border-bottom: 1px solid rgba(255, 255, 255, 0.05);
   overflow-x: auto;
+  flex-shrink: 0;
 }
 
 .tab-btn {
@@ -3019,9 +3029,15 @@ onUnmounted(() => {
 
 /* Content Area */
 .admin-content {
+  flex: 1;
+  min-height: 0;
   padding: 2rem;
   max-width: 1400px;
   margin: 0 auto;
+  width: 100%;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
 }
 
 .panel {
