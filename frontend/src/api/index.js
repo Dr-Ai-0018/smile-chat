@@ -52,7 +52,10 @@ export const adminAPI = {
   getUsers: () => client.get('/admin/users'),
   
   // 创建邀请码
-  createInvites: (count) => client.post('/admin/create_invite', { count }),
+  createInvites: (payload) => {
+    const body = typeof payload === 'number' ? { count: payload } : payload
+    return client.post('/admin/create_invite', body)
+  },
   
   // 获取邀请码列表
   getInvites: () => client.get('/admin/invites'),

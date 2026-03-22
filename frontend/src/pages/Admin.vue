@@ -394,18 +394,26 @@
       <!-- 邀请码管理 -->
       <section v-if="activeTab === 'invites'" class="panel invites-panel">
         <div class="panel-header">
-          <h2>邀请码管理</h2>
+          <div>
+            <h2>邀请码管理</h2>
+            <p class="invite-panel-subtitle">支持用手机号作为邀请码，并为每条邀请码补充备注，方便后续统计。</p>
+          </div>
           <div class="invite-create">
-            <input 
-              v-model.number="inviteCount" 
-              type="number" 
-              min="1" 
-              max="50"
-              placeholder="数量"
-              class="invite-count-input"
-            />
-            <button class="create-btn" @click="createInvites" :disabled="loading">
-              {{ loading ? '生成中...' : '生成邀请码' }}
+            <div class="invite-random-create">
+              <input
+                v-model.number="inviteCount"
+                type="number"
+                min="1"
+                max="50"
+                placeholder="数量"
+                class="invite-count-input"
+              />
+              <button class="create-btn" @click="createInvites" :disabled="inviteLoading">
+                {{ inviteLoading ? '生成中...' : '随机生成邀请码' }}
+              </button>
+            </div>
+            <button class="create-btn secondary" @click="openCustomInviteModal" :disabled="customInviteLoading">
+              批量自定义邀请码
             </button>
           </div>
         </div>
@@ -430,11 +438,21 @@
 
         <!-- 新生成的邀请码 -->
         <div v-if="newInvites.length > 0" class="new-invites-section">
-          <h3>🎉 新生成的邀请码</h3>
+          <div class="new-invites-header">
+            <div>
+              <h3>最近新增的邀请码</h3>
+              <p>按 ID、邀请码、备注 逐条展示，方便直接复制和登记。</p>
+            </div>
+            <button class="copy-btn" @click="copyInviteBatch(newInvites)">复制全部</button>
+          </div>
           <div class="new-invites-list">
-            <div v-for="code in newInvites" :key="code" class="new-invite-item">
-              <code>{{ code }}</code>
-              <button class="copy-btn" @click="copyCode(code)">复制</button>
+            <div v-for="invite in newInvites" :key="`new-${invite.id ?? invite.code}`" class="new-invite-item">
+              <span class="new-invite-id">#{{ invite.id ?? '-' }}</span>
+              <code>{{ invite.code }}</code>
+              <span :class="['new-invite-remark', !invite.remark ? 'empty' : '']">
+                {{ invite.remark || '无备注' }}
+              </span>
+              <button class="copy-btn" @click="copyCode(invite.code)">复制</button>
             </div>
           </div>
         </div>
@@ -457,15 +475,17 @@
               v-model.trim="inviteSearch"
               type="text"
               class="invite-search-input"
-              placeholder="搜索邀请码 / 用户ID / 用户名"
+              placeholder="搜索 ID / 邀请码 / 备注 / 用户ID / 用户名"
             />
           </div>
-          <div class="mapping-hint">映射关系：邀请码 → 用户ID → 用户名（支持搜索筛选）</div>
+          <div class="mapping-hint">1 对 1 映射：ID / 邀请码 / 备注 / 使用人，支持按任意字段搜索筛选。</div>
 
           <table class="data-table invites-table">
             <thead>
               <tr>
+                <th>ID</th>
                 <th>邀请码</th>
+                <th>备注</th>
                 <th>状态</th>
                 <th>用户ID</th>
                 <th>用户名</th>
@@ -474,11 +494,13 @@
               </tr>
             </thead>
             <tbody>
-              <tr v-for="invite in filteredInvites" :key="invite.code">
+              <tr v-for="invite in filteredInvites" :key="invite.id ?? invite.code">
+                <td class="id-cell">{{ invite.id ?? '-' }}</td>
                 <td class="code-cell">
                   <code>{{ invite.code }}</code>
-                  <button class="mini-copy" @click="copyCode(invite.code)" title="复制">📋</button>
+                  <button class="mini-copy" @click="copyCode(invite.code)" title="复制">复制</button>
                 </td>
+                <td class="invite-remark-cell">{{ invite.remark || '-' }}</td>
                 <td>
                   <span :class="['status-badge', invite.used ? 'used' : 'available']">
                     {{ invite.used ? '已使用' : '可用' }}
@@ -493,6 +515,64 @@
           </table>
         </div>
       </section>
+
+      <Transition name="modal">
+        <div v-if="showCustomInviteModal" class="modal-overlay" @click.self="closeCustomInviteModal">
+          <div class="modal custom-invite-modal">
+            <div class="modal-header">
+              <h3>批量新增自定义邀请码</h3>
+              <button class="close-btn" @click="closeCustomInviteModal">×</button>
+            </div>
+            <div class="modal-body">
+              <div class="custom-invite-toolbar">
+                <p class="custom-invite-tip">支持直接填写手机号作为邀请码。留空行会自动忽略，同一批次内的邀请码不能重复。</p>
+                <div class="custom-invite-actions">
+                  <button class="modal-btn accent" @click="appendCustomInviteRows(5)" :disabled="customInviteRows.length >= 50">新增 5 行</button>
+                  <button class="modal-btn" @click="appendCustomInviteRows(1)" :disabled="customInviteRows.length >= 50">新增 1 行</button>
+                </div>
+              </div>
+
+              <div class="custom-invite-grid">
+                <div class="custom-invite-grid-header">
+                  <span>序号</span>
+                  <span>邀请码 / 手机号</span>
+                  <span>备注</span>
+                  <span>操作</span>
+                </div>
+                <div v-for="(item, index) in customInviteRows" :key="item.key" class="custom-invite-row">
+                  <span class="custom-row-index">{{ index + 1 }}</span>
+                  <input
+                    v-model.trim="item.code"
+                    type="text"
+                    maxlength="64"
+                    placeholder="例如：13800138000"
+                  />
+                  <input
+                    v-model.trim="item.remark"
+                    type="text"
+                    maxlength="100"
+                    placeholder="例如：张三 / 1班 / 备选"
+                  />
+                  <button
+                    class="remove-row-btn"
+                    @click="removeCustomInviteRow(index)"
+                    :disabled="customInviteRows.length <= 1"
+                  >
+                    删除
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div class="modal-footer">
+              <button class="modal-btn" @click="resetCustomInviteRows()">重置</button>
+              <button class="modal-btn primary" @click="submitCustomInvites" :disabled="customInviteLoading">
+                {{ customInviteLoading ? '提交中...' : `批量新增 (${filledCustomInviteCount})` }}
+              </button>
+              <button class="modal-btn" @click="closeCustomInviteModal" :disabled="customInviteLoading">取消</button>
+            </div>
+          </div>
+        </div>
+      </Transition>
 
       <!-- 系统配置 -->
       <section v-if="activeTab === 'config'" class="panel config-panel">
@@ -1516,8 +1596,12 @@ const inviteFilter = ref('all')
 const inviteSearch = ref('')
 const inviteCount = ref(5)
 const newInvites = ref([])
+const inviteLoading = ref(false)
+const customInviteLoading = ref(false)
 const inviteCodeEnabled = ref(true)
 const checkinThreshold = ref(2)
+const showCustomInviteModal = ref(false)
+const customInviteRows = ref([])
 
 // 用户多选
 const selectedUserIds = ref(new Set())
@@ -1641,6 +1725,42 @@ const showAnswersModal = ref(false)
 const viewingAnswers = ref([])
 const viewingGroupName = ref('')
 
+const createInviteDraft = () => ({
+  key: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+  code: '',
+  remark: '',
+})
+
+const resetCustomInviteRows = (count = 5) => {
+  customInviteRows.value = Array.from({ length: count }, () => createInviteDraft())
+}
+
+const normalizeInviteItems = (items = []) =>
+  items
+    .map(item => ({
+      id: item?.id ?? null,
+      code: String(item?.code || '').trim(),
+      remark: String(item?.remark || '').trim(),
+    }))
+    .filter(item => item.code)
+
+const normalizedCustomInviteItems = computed(() => normalizeInviteItems(customInviteRows.value))
+
+const filledCustomInviteCount = computed(() => normalizedCustomInviteItems.value.length)
+
+const findDuplicateInviteCodes = (items) => {
+  const seen = new Set()
+  const duplicates = []
+  items.forEach(item => {
+    if (seen.has(item.code)) {
+      duplicates.push(item.code)
+      return
+    }
+    seen.add(item.code)
+  })
+  return [...new Set(duplicates)]
+}
+
 // 过滤用户
 const filteredUsers = computed(() => {
   if (!userSearch.value) return users.value
@@ -1665,7 +1785,9 @@ const filteredInvites = computed(() => {
 
   return base.filter(invite => {
     const fields = [
+      invite.id == null ? '' : String(invite.id),
       invite.code,
+      invite.remark || '',
       invite.used_by == null ? '' : String(invite.used_by),
       invite.used_username || '',
       invite.used_condition || '',
@@ -2099,22 +2221,110 @@ const renderCharts = async () => {
 }
 
 // 操作
+const openCustomInviteModal = () => {
+  if (customInviteRows.value.length === 0) {
+    resetCustomInviteRows()
+  }
+  showCustomInviteModal.value = true
+}
+
+const closeCustomInviteModal = () => {
+  showCustomInviteModal.value = false
+}
+
+const appendCustomInviteRows = (count = 1) => {
+  const remaining = 50 - customInviteRows.value.length
+  if (remaining <= 0) {
+    toast.error('单次最多编辑 50 个邀请码')
+    return
+  }
+  customInviteRows.value = [
+    ...customInviteRows.value,
+    ...Array.from({ length: Math.min(count, remaining) }, () => createInviteDraft()),
+  ]
+}
+
+const removeCustomInviteRow = (index) => {
+  if (customInviteRows.value.length <= 1) {
+    customInviteRows.value = [createInviteDraft()]
+    return
+  }
+  customInviteRows.value = customInviteRows.value.filter((_, idx) => idx !== index)
+}
+
+const copyInviteBatch = (items) => {
+  const rows = normalizeInviteItems(items)
+  if (rows.length === 0) {
+    toast.error('没有可复制的邀请码')
+    return
+  }
+  const content = [
+    'ID\t邀请码\t备注',
+    ...rows.map(item => `${item.id ?? '-'}\t${item.code}\t${item.remark || '-'}`),
+  ].join('\n')
+  navigator.clipboard.writeText(content).then(() => {
+    toast.success('整批邀请码已复制到剪贴板')
+  }).catch(() => {
+    toast.error('复制失败')
+  })
+}
+
 const createInvites = async () => {
   if (inviteCount.value < 1 || inviteCount.value > 50) {
     toast.error('生成数量需在1-50之间')
     return
   }
   
-  loading.value = true
+  inviteLoading.value = true
   try {
     const res = await adminAPI.createInvites(inviteCount.value)
-    newInvites.value = res.codes
+    newInvites.value = normalizeInviteItems(res.items?.length ? res.items : res.codes?.map(code => ({ code })))
     await loadInvites()
     toast.success(`成功生成 ${res.count} 个邀请码`)
   } catch (err) {
     toast.error('生成邀请码失败')
   } finally {
-    loading.value = false
+    inviteLoading.value = false
+  }
+}
+
+const submitCustomInvites = async () => {
+  const items = normalizedCustomInviteItems.value
+  if (items.length === 0) {
+    toast.error('请至少填写一个邀请码')
+    return
+  }
+
+  const duplicates = findDuplicateInviteCodes(items)
+  if (duplicates.length > 0) {
+    toast.error(`存在重复邀请码：${duplicates.join('、')}`)
+    return
+  }
+
+  customInviteLoading.value = true
+  try {
+    const res = await adminAPI.createInvites({ items })
+    const createdItems = normalizeInviteItems(res.items)
+    await loadInvites()
+
+    if ((res.count || 0) === 0) {
+      toast.error('填写的邀请码都已存在，未创建新记录')
+      return
+    }
+
+    newInvites.value = createdItems
+    showCustomInviteModal.value = false
+    resetCustomInviteRows()
+
+    if (res.skipped?.length) {
+      toast.success(`成功新增 ${res.count} 个邀请码，跳过 ${res.skipped.length} 个已存在邀请码`)
+    } else {
+      toast.success(`成功新增 ${res.count} 个邀请码`)
+    }
+  } catch (err) {
+    toast.error(err?.response?.data?.detail || '批量新增邀请码失败')
+  } finally {
+    customInviteLoading.value = false
   }
 }
 
@@ -2684,6 +2894,7 @@ watch(activeSysPrompt, async (condition) => {
 })
 
 onMounted(async () => {
+  resetCustomInviteRows()
   await loadStats()
   await loadDetailedStats()
   loadUsers()
@@ -3141,7 +3352,20 @@ onUnmounted(() => {
 }
 
 /* Invites */
+.invite-panel-subtitle {
+  margin: 0.35rem 0 0;
+  color: rgba(255, 255, 255, 0.68);
+  font-size: 0.9rem;
+}
+
 .invite-create {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.invite-random-create {
   display: flex;
   gap: 0.75rem;
 }
@@ -3167,9 +3391,22 @@ onUnmounted(() => {
   transition: all 0.2s;
 }
 
+.create-btn.secondary {
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+}
+
 .create-btn:hover:not(:disabled) {
   transform: translateY(-2px);
   box-shadow: 0 4px 12px rgba(255, 215, 0, 0.3);
+}
+
+.create-btn:disabled,
+.copy-btn:disabled,
+.remove-row-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .new-invites-section {
@@ -3180,9 +3417,23 @@ onUnmounted(() => {
   margin-bottom: 1.5rem;
 }
 
+.new-invites-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
 .new-invites-section h3 {
-  margin: 0 0 1rem 0;
+  margin: 0;
   color: #22c55e;
+}
+
+.new-invites-header p {
+  margin: 0.35rem 0 0;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 0.85rem;
 }
 
 .new-invites-list {
@@ -3200,10 +3451,27 @@ onUnmounted(() => {
   border-radius: 8px;
 }
 
+.new-invite-id {
+  min-width: 56px;
+  color: rgba(255, 255, 255, 0.68);
+  font-weight: 600;
+}
+
 .new-invite-item code {
-  flex: 1;
+  flex: 1 1 240px;
   font-family: 'JetBrains Mono', monospace;
   color: #22c55e;
+}
+
+.new-invite-remark {
+  min-width: 180px;
+  max-width: 320px;
+  color: rgba(255, 255, 255, 0.84);
+  word-break: break-word;
+}
+
+.new-invite-remark.empty {
+  color: rgba(255, 255, 255, 0.45);
 }
 
 .copy-btn {
@@ -3277,12 +3545,22 @@ onUnmounted(() => {
   color: #ffd700;
 }
 
+.invite-remark-cell {
+  min-width: 180px;
+  max-width: 260px;
+  word-break: break-word;
+  color: rgba(255, 255, 255, 0.82);
+}
+
 .mini-copy {
-  background: transparent;
-  border: none;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.82);
+  padding: 0.2rem 0.45rem;
+  border-radius: 6px;
   cursor: pointer;
-  opacity: 0.5;
-  transition: opacity 0.2s;
+  opacity: 0.72;
+  transition: all 0.2s;
 }
 
 .mini-copy:hover {
@@ -3304,6 +3582,87 @@ onUnmounted(() => {
 .status-badge.used {
   background: rgba(239, 68, 68, 0.2);
   color: #ef4444;
+}
+
+.custom-invite-modal {
+  max-width: 980px;
+}
+
+.custom-invite-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
+}
+
+.custom-invite-tip {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.72);
+  line-height: 1.6;
+}
+
+.custom-invite-actions {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.custom-invite-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.custom-invite-grid-header,
+.custom-invite-row {
+  display: grid;
+  grid-template-columns: 72px minmax(220px, 1.6fr) minmax(220px, 1.2fr) 84px;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+.custom-invite-grid-header {
+  padding: 0 0.25rem;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 0.82rem;
+}
+
+.custom-invite-row {
+  background: rgba(0, 0, 0, 0.22);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  padding: 0.75rem;
+}
+
+.custom-row-index {
+  color: #ffd700;
+  font-weight: 700;
+}
+
+.custom-invite-row input {
+  width: 100%;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  color: #fff;
+  padding: 0.68rem 0.8rem;
+  outline: none;
+}
+
+.custom-invite-row input:focus {
+  border-color: rgba(255, 215, 0, 0.7);
+  box-shadow: 0 0 0 2px rgba(255, 215, 0, 0.12);
+}
+
+.remove-row-btn {
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.22);
+  color: #fca5a5;
+  border-radius: 8px;
+  padding: 0.55rem 0.4rem;
+  cursor: pointer;
 }
 
 /* Config */
@@ -3980,10 +4339,31 @@ onUnmounted(() => {
   
   .invite-create {
     width: 100%;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .invite-random-create {
+    width: 100%;
   }
   
   .invite-count-input {
     flex: 1;
+  }
+
+  .new-invites-header,
+  .new-invite-item,
+  .custom-invite-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .custom-invite-grid-header {
+    display: none;
+  }
+
+  .custom-invite-row {
+    grid-template-columns: 1fr;
   }
 }
 

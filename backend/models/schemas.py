@@ -48,8 +48,14 @@ class MemoryUpdate(BaseModel):
     memory_type: str  # "history", "json", "memory"
 
 # 管理相关
+class InviteCodeItem(BaseModel):
+    code: str = Field(..., min_length=1, max_length=64)
+    remark: Optional[str] = Field(default="", max_length=100)
+
+
 class InviteCodeCreate(BaseModel):
-    count: int = 1
+    count: Optional[int] = Field(default=None, ge=1, le=200)
+    items: List[InviteCodeItem] = Field(default_factory=list)
 
 class PasswordReset(BaseModel):
     user_id: int

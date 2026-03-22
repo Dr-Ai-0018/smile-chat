@@ -440,8 +440,43 @@ async def create_invite_codes(
 ):
     """创建邀请码"""
     created: List[dict] = []
-    remaining = max(0, int(req.count))
 
+    if req.items:
+        payload_items: List[Dict[str, str]] = []
+        seen_codes = set()
+        duplicate_codes = set()
+
+        for item in req.items:
+            code = item.code.strip()
+            remark = (item.remark or "").strip()
+            if not code:
+                continue
+            if code in seen_codes:
+                duplicate_codes.add(code)
+                continue
+            seen_codes.add(code)
+            payload_items.append({"code": code, "remark": remark})
+
+        if duplicate_codes:
+            duplicates_text = "、".join(sorted(duplicate_codes))
+            raise HTTPException(status_code=400, detail=f"批量新增失败，存在重复邀请码: {duplicates_text}")
+
+        if not payload_items:
+            raise HTTPException(status_code=400, detail="请至少填写一个邀请码")
+
+        created = storage.create_invite_codes(payload_items)
+        created_codes = {item.get("code") for item in created if item.get("code")}
+        skipped = [item["code"] for item in payload_items if item["code"] not in created_codes]
+        return {
+            "items": created,
+            "codes": [c.get("code") for c in created if c.get("code")],
+            "count": len(created),
+            "skipped": skipped,
+        }
+
+    remaining = int(req.count or 0)
+    if remaining < 1:
+        raise HTTPException(status_code=400, detail="请提供生成数量，或填写自定义邀请码")
     while remaining > 0:
         batch = [secrets.token_urlsafe(16) for _ in range(remaining)]
         created_batch = storage.create_invite_codes(batch)
@@ -449,7 +484,7 @@ async def create_invite_codes(
         remaining = req.count - len(created)
 
     codes = [c.get("code") for c in created if c.get("code")]
-    return {"codes": codes, "count": len(codes)}
+    return {"items": created, "codes": codes, "count": len(codes), "skipped": []}
 
 @router.get("/invites")
 async def list_invites(
@@ -457,7 +492,7 @@ async def list_invites(
 ):
     """获取邀请码列表"""
     invites = storage.read_invites()
-    invites.sort(key=lambda x: x.get("created_at") or "", reverse=True)
+    invites.sort(key=lambda x: ((x.get("created_at") or ""), int(x.get("id") or 0)), reverse=True)
     users_by_id = {}
     for user in storage.read_users():
         user_id = user.get("id")
@@ -469,7 +504,9 @@ async def list_invites(
         used_by = invite.get("used_by")
         used_user = users_by_id.get(used_by) if isinstance(used_by, int) else None
         formatted.append({
+            "id": invite.get("id"),
             "code": invite.get("code"),
+            "remark": invite.get("remark") or "",
             "used": bool(invite.get("used")),
             "used_by": used_by,
             "used_username": used_user.get("username") if used_user else None,

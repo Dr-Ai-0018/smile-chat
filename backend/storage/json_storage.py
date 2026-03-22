@@ -40,6 +40,68 @@ class JsonStorage:
         self._users_file = self.base_dir / "users.json"
         self._invites_file = self.base_dir / "invites.json"
         self._settings_file = self.base_dir / "settings.json"
+        self.ensure_invites_schema()
+
+    def _normalize_invites_data(self, data: Any) -> tuple[Dict[str, Any], bool]:
+        changed = False
+        if not isinstance(data, dict):
+            data = {"next_id": 1, "items": []}
+            changed = True
+
+        items = data.get("items")
+        if not isinstance(items, list):
+            items = []
+            changed = True
+
+        normalized_items: List[Dict[str, Any]] = []
+        max_id = 0
+        for item in items:
+            if not isinstance(item, dict):
+                changed = True
+                continue
+            invite = dict(item)
+            invite_id = invite.get("id")
+            if isinstance(invite_id, int) and invite_id > 0:
+                max_id = max(max_id, invite_id)
+            normalized_items.append(invite)
+
+        next_id = data.get("next_id")
+        if not isinstance(next_id, int) or next_id < 1:
+            next_id = max_id + 1 if max_id >= 1 else 1
+            changed = True
+        next_id = max(next_id, max_id + 1, 1)
+
+        for invite in normalized_items:
+            invite_id = invite.get("id")
+            if not isinstance(invite_id, int) or invite_id < 1:
+                invite["id"] = next_id
+                next_id += 1
+                changed = True
+
+            remark = invite.get("remark")
+            if remark is None:
+                invite["remark"] = ""
+                changed = True
+            elif not isinstance(remark, str):
+                invite["remark"] = str(remark)
+                changed = True
+
+        normalized = {
+            "next_id": max(next_id, max((i.get("id", 0) for i in normalized_items), default=0) + 1, 1),
+            "items": normalized_items,
+        }
+
+        if normalized != data:
+            changed = True
+
+        return normalized, changed
+
+    def ensure_invites_schema(self) -> None:
+        with self._lock_paths([self._invites_file]):
+            raw = self._read_json_unlocked(self._invites_file, {"next_id": 1, "items": []})
+            normalized, changed = self._normalize_invites_data(raw)
+            if changed:
+                self._write_json_atomic_unlocked(self._invites_file, normalized)
 
     def _lockfile_path(self, path: Path) -> Path:
         return path.parent / f"{path.name}.lock"
@@ -163,12 +225,9 @@ class JsonStorage:
         return data
 
     def _read_invites_data_unlocked(self) -> Dict[str, Any]:
-        data = self._read_json_unlocked(self._invites_file, {"items": []})
-        if not isinstance(data, dict):
-            data = {"items": []}
-        if not isinstance(data.get("items"), list):
-            data["items"] = []
-        return data
+        data = self._read_json_unlocked(self._invites_file, {"next_id": 1, "items": []})
+        normalized, _ = self._normalize_invites_data(data)
+        return normalized
 
     def _chat_history_file(self, user_id: int) -> Path:
         return self._chat_history_dir / f"{user_id}.json"
@@ -327,19 +386,31 @@ class JsonStorage:
                 return invite
         return None
 
-    def create_invite_codes(self, codes: List[str]) -> List[Dict[str, Any]]:
+    def create_invite_codes(self, codes: List[Any]) -> List[Dict[str, Any]]:
         with self._lock_paths([self._invites_file]):
             data = self._read_invites_data_unlocked()
             items = data["items"]
+            next_id = data.get("next_id", 1)
 
             existing = {i.get("code") for i in items if isinstance(i, dict)}
             created = []
             created_at = get_china_now().isoformat()
-            for code in codes:
+            for raw in codes:
+                if isinstance(raw, dict):
+                    code = str(raw.get("code") or "").strip()
+                    remark = str(raw.get("remark") or "").strip()
+                else:
+                    code = str(raw or "").strip()
+                    remark = ""
+
+                if not code:
+                    continue
                 if code in existing:
                     continue
                 invite = {
+                    "id": next_id,
                     "code": code,
+                    "remark": remark,
                     "used": False,
                     "used_by": None,
                     "created_at": created_at,
@@ -347,6 +418,8 @@ class JsonStorage:
                 items.append(invite)
                 existing.add(code)
                 created.append(invite)
+                next_id += 1
+            data["next_id"] = next_id
             self._write_json_atomic_unlocked(self._invites_file, data)
             return created
 
@@ -414,11 +487,10 @@ class JsonStorage:
             return user
 
     def read_invites(self) -> List[Dict[str, Any]]:
-        default = {"items": []}
+        default = {"next_id": 1, "items": []}
         data = self.read_json(self._invites_file, default)
-        if not isinstance(data, dict):
-            return []
-        items = data.get("items")
+        normalized, _ = self._normalize_invites_data(data)
+        items = normalized.get("items")
         if not isinstance(items, list):
             return []
         return list(items)
