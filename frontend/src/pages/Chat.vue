@@ -686,22 +686,6 @@ const detachViewportListeners = () => {
   viewportListenersAttached = false
 }
 
-const attachViewportListeners = () => {
-  if (viewportListenersAttached || typeof window === 'undefined') return
-  window.addEventListener('resize', handleViewportChange)
-  window.visualViewport?.addEventListener('resize', handleViewportChange)
-  window.visualViewport?.addEventListener('scroll', handleViewportChange)
-  viewportListenersAttached = true
-}
-
-const detachViewportListeners = () => {
-  if (!viewportListenersAttached || typeof window === 'undefined') return
-  window.removeEventListener('resize', handleViewportChange)
-  window.visualViewport?.removeEventListener('resize', handleViewportChange)
-  window.visualViewport?.removeEventListener('scroll', handleViewportChange)
-  viewportListenersAttached = false
-}
-
 // 显示关于
 const showAbout = () => {
   showMenu.value = false
