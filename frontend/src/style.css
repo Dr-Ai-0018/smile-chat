@@ -25,6 +25,7 @@ html {
   height: 100%;
   height: 100dvh;
   background: var(--color-bg);
+  overflow: hidden;
 }
 
 * {
@@ -39,9 +40,11 @@ body {
   min-height: 100dvh;
   min-height: var(--app-height);
   overflow-x: hidden;
+  overflow-y: hidden;
   background: var(--color-bg);
   -webkit-text-size-adjust: 100%;
   overscroll-behavior-y: none;
+  touch-action: manipulation;
 }
 
 a {

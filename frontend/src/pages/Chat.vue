@@ -148,14 +148,23 @@
           @change="handleImageSelect"
           style="display: none"
         />
-        <input
-          type="text"
+        <textarea
           v-model="inputMessage"
-          @keydown.enter.exact.prevent="sendMessage"
+          @keydown="handleInputKeydown"
+          @input="handleTextareaInput"
+          @focus="handleInputFocus"
           placeholder="输入消息..."
           ref="inputElement"
           class="message-input"
-        />
+          rows="1"
+          name="message"
+          enterkeyhint="send"
+          autocomplete="off"
+          autocorrect="on"
+          autocapitalize="sentences"
+          spellcheck="true"
+          data-form-type="other"
+        ></textarea>
         <button class="icon-btn send-btn" @click="sendMessage" :disabled="!canSend">
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M22 2L11 13"/>
@@ -234,6 +243,8 @@ const messagesContainer = ref(null)
 const inputElement = ref(null)
 const imageInput = ref(null)
 const previewImageUrl = ref(null)
+const textareaMaxHeight = 120
+let viewportResizeRaf = null
 
 // 请求控制
 let currentAbortController = null
@@ -354,6 +365,7 @@ const sendMessage = async (imageBase64 = null) => {
   
   // 清空输入
   inputMessage.value = ''
+  nextTick(() => resetTextareaHeight())
   
   // 添加用户消息（无论什么状态都先添加）
   const userMsg = {
@@ -601,6 +613,44 @@ const scrollToBottom = () => {
   })
 }
 
+const resetTextareaHeight = () => {
+  const el = inputElement.value
+  if (!el) return
+  el.style.height = 'auto'
+  el.style.height = `${Math.min(el.scrollHeight, textareaMaxHeight)}px`
+  el.style.overflowY = el.scrollHeight > textareaMaxHeight ? 'auto' : 'hidden'
+}
+
+const handleTextareaInput = () => {
+  resetTextareaHeight()
+}
+
+const handleInputKeydown = (event) => {
+  if (event.key !== 'Enter') return
+
+  const isDesktopLike = typeof window !== 'undefined' && window.matchMedia('(min-width: 769px)').matches
+
+  if (event.shiftKey) {
+    if (isDesktopLike) {
+      return
+    }
+    event.preventDefault()
+    return
+  }
+
+  if (event.nativeEvent?.isComposing || event.isComposing) return
+
+  event.preventDefault()
+  sendMessage()
+}
+
+const handleInputFocus = () => {
+  updateViewportHeight()
+  window.setTimeout(() => {
+    scrollToBottom()
+  }, 180)
+}
+
 // 同步移动端可视区高度，降低软键盘导致 100vh 错位
 const updateViewportHeight = () => {
   if (typeof window === 'undefined') return
@@ -609,8 +659,31 @@ const updateViewportHeight = () => {
 }
 
 const handleViewportChange = () => {
-  updateViewportHeight()
-  scrollToBottom()
+  if (viewportResizeRaf) {
+    cancelAnimationFrame(viewportResizeRaf)
+  }
+  viewportResizeRaf = requestAnimationFrame(() => {
+    updateViewportHeight()
+    viewportResizeRaf = null
+  })
+}
+
+const attachViewportListeners = () => {
+  if (viewportListenersAttached || typeof window === 'undefined') return
+  window.addEventListener('resize', handleViewportChange)
+  window.visualViewport?.addEventListener('resize', handleViewportChange)
+  viewportListenersAttached = true
+}
+
+const detachViewportListeners = () => {
+  if (!viewportListenersAttached || typeof window === 'undefined') return
+  window.removeEventListener('resize', handleViewportChange)
+  window.visualViewport?.removeEventListener('resize', handleViewportChange)
+  if (viewportResizeRaf) {
+    cancelAnimationFrame(viewportResizeRaf)
+    viewportResizeRaf = null
+  }
+  viewportListenersAttached = false
 }
 
 const attachViewportListeners = () => {
@@ -913,6 +986,7 @@ const detachGlobalListeners = () => {
 onMounted(async () => {
   updateViewportHeight()
   attachViewportListeners()
+  nextTick(() => resetTextareaHeight())
 
   // 并行加载历史和同步头像
   await Promise.all([loadHistory(), syncUserAvatar()])
@@ -929,6 +1003,7 @@ onActivated(() => {
   attachViewportListeners()
   attachGlobalListeners()
   startCheckinAutoSync()
+  nextTick(() => resetTextareaHeight())
   scrollToBottom()
   if (isPageVisible()) {
     handleVisibilityChange()
@@ -1461,25 +1536,38 @@ onUnmounted(() => {
 .input-container {
   display: flex;
   gap: 0.5rem;
-  align-items: center;
+  align-items: flex-end;
   background: var(--color-primary);
   padding: 0.5rem;
-  border-radius: 50px;
+  border-radius: 28px;
   border: 3px solid #000;
   box-shadow: 3px 3px 0 rgba(0, 0, 0, 0.2);
 }
 
 .message-input {
   flex: 1;
+  min-width: 0;
+  min-height: 44px;
+  max-height: 120px;
   border: none;
   background: white;
-  padding: 0.75rem 1.25rem;
-  border-radius: 50px;
+  padding: 0.7rem 1.1rem;
+  border-radius: 22px;
   font-family: inherit;
   font-size: 1rem;
+  line-height: 1.45;
   color: #000;
   font-weight: 500;
   border: 2px solid #000;
+  resize: none;
+  overflow-y: hidden;
+  overflow-x: hidden;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.message-input::placeholder {
+  color: #666;
 }
 
 .message-input:focus {
@@ -1738,9 +1826,11 @@ onUnmounted(() => {
   }
   
   .message-input {
-    padding: 0.625rem 1rem;
-    font-size: 0.95rem;
     min-width: 0;
+    min-height: 42px;
+    padding: 0.625rem 0.95rem;
+    font-size: 16px;
+    line-height: 1.4;
   }
   
   .icon-btn {
@@ -1783,8 +1873,10 @@ onUnmounted(() => {
   }
   
   .message-input {
+    min-height: 40px;
     padding: 0.5rem 0.75rem;
-    font-size: 0.9rem;
+    font-size: 16px;
+    line-height: 1.35;
   }
   
   .icon-btn {
