@@ -153,6 +153,7 @@
           @keydown="handleInputKeydown"
           @input="handleTextareaInput"
           @focus="handleInputFocus"
+          @blur="handleInputBlur"
           placeholder="输入消息..."
           ref="inputElement"
           class="message-input"
@@ -645,17 +646,52 @@ const handleInputKeydown = (event) => {
 }
 
 const handleInputFocus = () => {
-  updateViewportHeight()
+  updateViewportMetrics()
+  resetWindowScroll()
+  ;[80, 180, 320].forEach((delay) => {
+    window.setTimeout(() => {
+      updateViewportMetrics()
+      resetWindowScroll()
+      scrollToBottom()
+    }, delay)
+  })
+}
+
+const handleInputBlur = () => {
   window.setTimeout(() => {
-    scrollToBottom()
+    updateViewportMetrics()
+    resetWindowScroll()
   }, 180)
 }
 
-// 同步移动端可视区高度，降低软键盘导致 100vh 错位
-const updateViewportHeight = () => {
-  if (typeof window === 'undefined') return
-  const viewportHeight = window.visualViewport?.height || window.innerHeight
+const resetWindowScroll = () => {
+  if (typeof window === 'undefined' || typeof document === 'undefined') return
+  const scrollingElement = document.scrollingElement
+  if (scrollingElement && scrollingElement.scrollTop !== 0) {
+    scrollingElement.scrollTop = 0
+  }
+  if (window.scrollY !== 0 || window.scrollX !== 0) {
+    window.scrollTo(0, 0)
+  }
+}
+
+// 同步移动端可视区尺寸和偏移，降低 iOS 软键盘导致的错位
+const updateViewportMetrics = () => {
+  if (typeof window === 'undefined' || typeof document === 'undefined') return
+
+  const viewport = window.visualViewport
+  const viewportHeight = viewport?.height || window.innerHeight
+  const viewportOffsetTop = Math.max(0, viewport?.offsetTop || 0)
+  const layoutViewportHeight = window.innerHeight || viewportHeight
+  const keyboardInset = Math.max(0, layoutViewportHeight - viewportHeight - viewportOffsetTop)
+
   document.documentElement.style.setProperty('--app-height', `${Math.round(viewportHeight)}px`)
+  document.documentElement.style.setProperty('--viewport-offset-top', `${Math.round(viewportOffsetTop)}px`)
+  document.documentElement.style.setProperty('--keyboard-inset-height', `${Math.round(keyboardInset)}px`)
+
+  if (keyboardInset > 0 || document.activeElement === inputElement.value) {
+    resetWindowScroll()
+  }
 }
 
 const handleViewportChange = () => {
@@ -663,7 +699,10 @@ const handleViewportChange = () => {
     cancelAnimationFrame(viewportResizeRaf)
   }
   viewportResizeRaf = requestAnimationFrame(() => {
-    updateViewportHeight()
+    updateViewportMetrics()
+    if (typeof document !== 'undefined' && document.activeElement === inputElement.value) {
+      scrollToBottom()
+    }
     viewportResizeRaf = null
   })
 }
@@ -672,6 +711,7 @@ const attachViewportListeners = () => {
   if (viewportListenersAttached || typeof window === 'undefined') return
   window.addEventListener('resize', handleViewportChange)
   window.visualViewport?.addEventListener('resize', handleViewportChange)
+  window.visualViewport?.addEventListener('scroll', handleViewportChange)
   viewportListenersAttached = true
 }
 
@@ -679,9 +719,14 @@ const detachViewportListeners = () => {
   if (!viewportListenersAttached || typeof window === 'undefined') return
   window.removeEventListener('resize', handleViewportChange)
   window.visualViewport?.removeEventListener('resize', handleViewportChange)
+  window.visualViewport?.removeEventListener('scroll', handleViewportChange)
   if (viewportResizeRaf) {
     cancelAnimationFrame(viewportResizeRaf)
     viewportResizeRaf = null
+  }
+  if (typeof document !== 'undefined') {
+    document.documentElement.style.setProperty('--viewport-offset-top', '0px')
+    document.documentElement.style.setProperty('--keyboard-inset-height', '0px')
   }
   viewportListenersAttached = false
 }
@@ -968,7 +1013,7 @@ const detachGlobalListeners = () => {
 }
 
 onMounted(async () => {
-  updateViewportHeight()
+  updateViewportMetrics()
   attachViewportListeners()
   nextTick(() => resetTextareaHeight())
 
@@ -983,7 +1028,7 @@ onMounted(async () => {
 })
 
 onActivated(() => {
-  updateViewportHeight()
+  updateViewportMetrics()
   attachViewportListeners()
   attachGlobalListeners()
   startCheckinAutoSync()
@@ -1015,14 +1060,20 @@ onUnmounted(() => {
 .chat-page {
   display: flex;
   flex-direction: column;
+  position: fixed;
+  top: var(--viewport-offset-top);
+  left: 50%;
+  transform: translateX(-50%);
   height: 100vh;
   height: 100dvh;
   height: var(--app-height);
+  max-height: var(--app-height);
   background: var(--color-bg);
   overflow: hidden;
   width: min(100%, 960px);
   min-width: 800px;
   margin: 0 auto;
+  overscroll-behavior: none;
 }
 
 /* 顶部标题栏 */
