@@ -28,6 +28,11 @@ def get_current_week_key() -> str:
     return get_china_now().strftime("%Y-W%W")
 
 
+def is_weekend(dt: Optional[datetime] = None) -> bool:
+    target = dt or get_china_now()
+    return target.weekday() >= 5
+
+
 def _runtime_setting_int(key: str, default: int) -> int:
     settings = storage.get_settings()
     try:
@@ -71,7 +76,10 @@ def sync_weekly_survey_records_for_user(user_id: int) -> List[dict]:
 
         week_keys = sorted(set(weekly_counts.keys()) | set(existing_records.keys()))
         synced: List[dict] = []
-        now_iso = get_china_now().isoformat()
+        now = get_china_now()
+        now_iso = now.isoformat()
+        current_week = get_current_week_key()
+        weekend_now = is_weekend(now)
 
         for week_key in week_keys:
             checkin_count = int(weekly_counts.get(week_key, 0) or 0)
@@ -99,7 +107,12 @@ def sync_weekly_survey_records_for_user(user_id: int) -> List[dict]:
                 updates["qualified_at"] = now_iso
                 updates["qualified_checkin_count_snapshot"] = checkin_count
 
-            if eligible and not notice_id:
+            # 当前周问卷只允许在周末派发；历史周次允许补发，避免用户错过上周末后永远收不到。
+            can_dispatch_notice = eligible and not notice_id and (
+                week_key != current_week or weekend_now
+            )
+
+            if can_dispatch_notice:
                 title, content = build_weekly_survey_content(week_key, checkin_count, survey_url)
                 notice = storage.create_notice({
                     "title": title,

@@ -205,8 +205,8 @@ async def weekend_survey_check(user_id: int = Depends(get_current_user)):
     """
     同步并检查用户是否存在待展示的周问卷提醒。
 
-    兼容旧接口名称，但真实派发逻辑以“达到本周打卡阈值”为准，
-    不再依赖用户是否恰好在周末在线。
+    兼容旧接口名称。当前周问卷仅允许在周末、且达到本周打卡阈值后派发；
+    对历史周次则允许补发，避免用户错过上周末后无法再收到提醒。
     """
     notice = get_latest_pending_weekly_survey_notice(user_id)
     if not notice:
