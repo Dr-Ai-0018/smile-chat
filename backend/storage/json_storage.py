@@ -1089,6 +1089,90 @@ class JsonStorage:
             return results[:limit]
         return results
 
+    # ==================== Weekly Cleanup History ====================
+
+    def _weekly_cleanup_history_file(self) -> Path:
+        return self.base_dir / "weekly_cleanup_history.json"
+
+    def _read_weekly_cleanup_history_unlocked(self) -> Dict[str, Any]:
+        data = self._read_json_unlocked(self._weekly_cleanup_history_file(), {"next_id": 1, "items": []})
+        if not isinstance(data, dict):
+            data = {"next_id": 1, "items": []}
+        if not isinstance(data.get("items"), list):
+            data["items"] = []
+        next_id = data.get("next_id")
+        if not isinstance(next_id, int) or next_id < 1:
+            data["next_id"] = 1
+        return data
+
+    def append_weekly_cleanup_history(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        path = self._weekly_cleanup_history_file()
+        with self._lock_paths([path]):
+            data = self._read_weekly_cleanup_history_unlocked()
+            now_iso = get_china_now().isoformat()
+            item = {
+                "id": data.get("next_id", 1),
+                "trigger_type": str(payload.get("trigger_type") or "manual"),
+                "reset_checkins": bool(payload.get("reset_checkins", False)),
+                "success": bool(payload.get("success", True)),
+                "message": str(payload.get("message") or ""),
+                "error": str(payload.get("error") or ""),
+                "updated_users": int(payload.get("updated_users", 0) or 0),
+                "current_week_key": str(payload.get("current_week_key") or self._get_current_week_key()),
+                "scheduled_for": payload.get("scheduled_for"),
+                "schedule_slot_key": payload.get("schedule_slot_key"),
+                "admin_id": payload.get("admin_id"),
+                "executed_at": payload.get("executed_at") or now_iso,
+                "created_at": now_iso,
+            }
+            data["items"].append(item)
+            data["next_id"] = int(item["id"]) + 1
+            self._write_json_atomic_unlocked(path, data)
+            return dict(item)
+
+    def get_weekly_cleanup_history(self, limit: int = 50) -> List[Dict[str, Any]]:
+        data = self.read_json(self._weekly_cleanup_history_file(), {"next_id": 1, "items": []})
+        items = [dict(item) for item in data.get("items", []) if isinstance(item, dict)]
+        items.sort(
+            key=lambda item: (
+                str(item.get("executed_at") or ""),
+                int(item.get("id") or 0),
+            ),
+            reverse=True,
+        )
+        if limit and limit > 0:
+            return items[:limit]
+        return items
+
+    def claim_weekly_cleanup_slot(self, slot_key: str) -> bool:
+        if not slot_key:
+            return False
+        with self._lock_paths([self._settings_file]):
+            data = self._read_json_unlocked(self._settings_file, {"invite_code_enabled": True})
+            if not isinstance(data, dict):
+                data = {"invite_code_enabled": True}
+            claimed = str(data.get("weekly_cleanup_auto_last_claimed_slot_key") or "").strip()
+            if claimed == slot_key:
+                return False
+            data["weekly_cleanup_auto_last_claimed_slot_key"] = slot_key
+            data["weekly_cleanup_auto_last_claimed_at"] = get_china_now().isoformat()
+            self._write_json_atomic_unlocked(self._settings_file, data)
+            return True
+
+    def release_weekly_cleanup_slot_claim(self, slot_key: str) -> None:
+        if not slot_key:
+            return
+        with self._lock_paths([self._settings_file]):
+            data = self._read_json_unlocked(self._settings_file, {"invite_code_enabled": True})
+            if not isinstance(data, dict):
+                data = {"invite_code_enabled": True}
+            claimed = str(data.get("weekly_cleanup_auto_last_claimed_slot_key") or "").strip()
+            if claimed != slot_key:
+                return
+            data["weekly_cleanup_auto_last_claimed_slot_key"] = None
+            data["weekly_cleanup_auto_last_claimed_at"] = None
+            self._write_json_atomic_unlocked(self._settings_file, data)
+
     # ==================== Experiment State ====================
 
     def _experiment_states_file(self) -> Path:

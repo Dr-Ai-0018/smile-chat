@@ -21,6 +21,7 @@ from routers import auth, chat, user, memory, admin, image, config, prompts, not
 from utils.jwt import verify_token
 from utils.password import hash_password
 from storage import JsonStorage
+from services.weekly_cleanup_service import start_weekly_cleanup_scheduler, stop_weekly_cleanup_scheduler
 
 
 DEFAULT_CORS_ALLOW_ORIGINS = []
@@ -92,7 +93,9 @@ def _bootstrap_on_empty_data() -> None:
 async def lifespan(app: FastAPI):
     if (os.getenv("BOOTSTRAP_ON_STARTUP", "1").strip().lower() not in {"0", "false", "no"}):
         _bootstrap_on_empty_data()
+    start_weekly_cleanup_scheduler()
     yield
+    await stop_weekly_cleanup_scheduler()
 
 app = FastAPI(
     title="Smile-Chat API",

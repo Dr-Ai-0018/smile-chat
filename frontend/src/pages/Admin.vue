@@ -1462,6 +1462,84 @@
               placeholder="https://..."
             />
           </div>
+
+          <div class="checkin-card">
+            <div class="checkin-card-header">
+              <div>
+                <h3>自动周切换</h3>
+                <p class="config-desc">控制是否在 UTC+8 每周日晚 24:00 自动执行“进入下一周（轮次 + 周统计重置）”</p>
+              </div>
+              <button class="refresh-btn small" @click="loadWeeklyCleanupStatus">刷新状态</button>
+            </div>
+
+            <div class="checkin-toggle-row">
+              <label class="toggle-label">启用自动周切换</label>
+              <input
+                v-model="checkinSettings.weekly_cleanup_auto_enabled"
+                type="checkbox"
+                class="config-checkbox"
+              />
+            </div>
+
+            <div class="cleanup-status-grid">
+              <div class="cleanup-status-item">
+                <span class="cleanup-status-label">计划</span>
+                <strong>{{ weeklyCleanupStatus.schedule_label || 'UTC+8 每周日晚 24:00（即周一 00:00）' }}</strong>
+              </div>
+              <div class="cleanup-status-item">
+                <span class="cleanup-status-label">下次触发</span>
+                <strong>{{ checkinSettings.weekly_cleanup_auto_enabled ? (formatDate(weeklyCleanupStatus.next_run_at) || '待计算') : '已关闭' }}</strong>
+              </div>
+              <div class="cleanup-status-item">
+                <span class="cleanup-status-label">上次自动执行</span>
+                <strong>{{ formatDate(weeklyCleanupStatus.last_auto_run?.executed_at) || '暂无' }}</strong>
+              </div>
+              <div class="cleanup-status-item">
+                <span class="cleanup-status-label">调度器状态</span>
+                <strong>{{ weeklyCleanupStatus.runner_active ? '运行中' : '未运行' }}</strong>
+              </div>
+            </div>
+
+            <p class="config-desc auto-cleanup-hint">
+              开启后从“下一次”周日晚 24:00 开始生效，不会在你保存设置的瞬间补跑当前周。
+            </p>
+
+            <div class="cleanup-history-wrap">
+              <div class="cleanup-history-head">
+                <h4>最近触发历史</h4>
+                <span>{{ weeklyCleanupHistory.length }} 条</span>
+              </div>
+              <div v-if="weeklyCleanupHistory.length === 0" class="cleanup-history-empty">
+                还没有周切换执行历史
+              </div>
+              <div v-else class="cleanup-history-table">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>时间</th>
+                      <th>来源</th>
+                      <th>结果</th>
+                      <th>影响用户</th>
+                      <th>周次</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="item in weeklyCleanupHistory" :key="`cleanup-history-${item.id}`">
+                      <td>{{ formatTime(item.executed_at) || '-' }}</td>
+                      <td>{{ formatWeeklyCleanupTrigger(item.trigger_type) }}</td>
+                      <td>
+                        <span class="cleanup-history-badge" :class="item.success ? 'success' : 'error'">
+                          {{ item.success ? '成功' : '失败' }}
+                        </span>
+                      </td>
+                      <td>{{ item.updated_users ?? 0 }}</td>
+                      <td>{{ item.current_week_key || '-' }}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
         </div>
 
         <!-- 右列：每周清理 -->
@@ -2760,6 +2838,14 @@ const formatWeeklySurveyCheckins = (record) => {
   return `${current}/${required || '-'}`
 }
 
+const formatWeeklyCleanupTrigger = (triggerType) => {
+  const map = {
+    auto: '自动',
+    manual: '手动',
+  }
+  return map[triggerType] || triggerType || '-'
+}
+
 const formatApiOverrideHint = (scope, field, effectiveValue, index = 0) => {
   const source = scope === 'primary'
     ? apiConfig.value.env_overrides?.primary
@@ -2800,7 +2886,15 @@ const DEFAULT_CHECKIN_QUESTIONS = [
 const checkinSettings = ref({
   weekly_survey_url: '',
   checkin_questions: [...DEFAULT_CHECKIN_QUESTIONS],
+  weekly_cleanup_auto_enabled: false,
 })
+const weeklyCleanupStatus = ref({
+  schedule_label: '',
+  next_run_at: null,
+  last_auto_run: null,
+  runner_active: false,
+})
+const weeklyCleanupHistory = ref([])
 
 const loadCheckinSettings = async () => {
   try {
@@ -2809,8 +2903,24 @@ const loadCheckinSettings = async () => {
     checkinSettings.value.checkin_questions = res.checkin_questions?.length
       ? res.checkin_questions
       : [...DEFAULT_CHECKIN_QUESTIONS]
+    checkinSettings.value.weekly_cleanup_auto_enabled = !!res.weekly_cleanup_auto_enabled
   } catch (e) {
     console.error('加载打卡设置失败', e)
+  }
+}
+
+const loadWeeklyCleanupStatus = async () => {
+  try {
+    const res = await adminAPI.getWeeklyCleanupStatus()
+    weeklyCleanupStatus.value = {
+      schedule_label: res.schedule_label || '',
+      next_run_at: res.next_run_at || null,
+      last_auto_run: res.last_auto_run || null,
+      runner_active: !!res.runner_active,
+    }
+    weeklyCleanupHistory.value = Array.isArray(res.history) ? res.history : []
+  } catch (e) {
+    console.error('加载每周清理状态失败', e)
   }
 }
 
@@ -2825,9 +2935,10 @@ const saveCheckinSettings = async () => {
     await settingsAPI.updateAdmin({
       weekly_survey_url: checkinSettings.value.weekly_survey_url,
       checkin_questions: validQuestions,
+      weekly_cleanup_auto_enabled: checkinSettings.value.weekly_cleanup_auto_enabled,
     })
     toast.success('打卡设置已保存')
-    await loadCheckinSettings()
+    await Promise.all([loadCheckinSettings(), loadWeeklyCleanupStatus()])
   } catch (e) {
     toast.error('保存失败')
   } finally {
@@ -2861,7 +2972,7 @@ const runWeeklyCleanup = async (resetCheckins = false) => {
         ? `${res.message}，已将 ${res.updated_users} 位用户切换到 ${res.current_week_key}`
         : `${res.message}，已清空 ${res.updated_users} 位用户的轮次缓存`
     )
-    await Promise.all([loadUsers(), loadDetailedStats(), loadStats()])
+    await Promise.all([loadUsers(), loadDetailedStats(), loadStats(), loadWeeklyCleanupStatus()])
   } catch (err) {
     console.error('执行每周清理失败:', err)
     toast.error(err.response?.data?.detail || '执行每周清理失败')
@@ -2882,7 +2993,7 @@ const retractCurrentWeeklySurveyDispatch = async () => {
     toast.success(
       `${res.message}：清理了 ${res.deleted_notices} 条通知，重置了 ${res.reset_records} 条周问卷记录，涉及 ${res.affected_users} 位用户`
     )
-    await Promise.all([loadUsers(), loadDetailedStats(), loadStats()])
+    await Promise.all([loadUsers(), loadDetailedStats(), loadStats(), loadWeeklyCleanupStatus()])
   } catch (err) {
     console.error('撤回本周周问卷失败:', err)
     toast.error(err.response?.data?.detail || '撤回本周周问卷失败')
@@ -2905,7 +3016,7 @@ watch(activeTab, async (tab) => {
     await loadSystemPrompts()
   }
   if (tab === 'checkin') {
-    await loadCheckinSettings()
+    await Promise.all([loadCheckinSettings(), loadWeeklyCleanupStatus()])
   }
   if (tab === 'users') {
     await loadUsers()
@@ -5015,6 +5126,127 @@ onUnmounted(() => {
 .url-input:focus {
   outline: none;
   border-color: rgba(255, 215, 0, 0.5);
+}
+
+.checkin-toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.toggle-label {
+  color: #fff;
+  font-weight: 600;
+  font-size: 0.92rem;
+}
+
+.auto-cleanup-hint {
+  margin-top: 0.85rem;
+}
+
+.cleanup-status-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.cleanup-status-item {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  padding: 0.8rem 0.9rem;
+}
+
+.cleanup-status-item strong {
+  display: block;
+  color: #fff;
+  line-height: 1.45;
+  font-size: 0.88rem;
+}
+
+.cleanup-status-label {
+  display: block;
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 0.76rem;
+  margin-bottom: 0.35rem;
+}
+
+.cleanup-history-wrap {
+  margin-top: 1rem;
+}
+
+.cleanup-history-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.75rem;
+}
+
+.cleanup-history-head h4 {
+  margin: 0;
+  color: #fff;
+  font-size: 0.92rem;
+}
+
+.cleanup-history-head span {
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 0.8rem;
+}
+
+.cleanup-history-empty {
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 0.84rem;
+  padding: 0.85rem;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.cleanup-history-table {
+  overflow-x: auto;
+}
+
+.cleanup-history-table table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+}
+
+.cleanup-history-table th,
+.cleanup-history-table td {
+  text-align: left;
+  padding: 0.65rem 0.5rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.82);
+  white-space: nowrap;
+}
+
+.cleanup-history-table th {
+  color: rgba(255, 255, 255, 0.55);
+  font-weight: 600;
+  font-size: 0.76rem;
+}
+
+.cleanup-history-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  padding: 0.2rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.74rem;
+  font-weight: 700;
+}
+
+.cleanup-history-badge.success {
+  color: #22c55e;
+  background: rgba(34, 197, 94, 0.14);
+}
+
+.cleanup-history-badge.error {
+  color: #f87171;
+  background: rgba(248, 113, 113, 0.14);
 }
 
 .cleanup-card { }

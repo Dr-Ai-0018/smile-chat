@@ -37,6 +37,11 @@ from services.weekly_survey_service import (
     retract_weekly_survey_notices_for_week,
     sync_weekly_survey_records_for_user,
 )
+from services.weekly_cleanup_service import (
+    execute_weekly_cleanup,
+    get_weekly_cleanup_status,
+    prepare_weekly_cleanup_settings_updates,
+)
 
 router = APIRouter()
 storage = JsonStorage()
@@ -889,15 +894,17 @@ async def trigger_weekly_cleanup(
     admin_id: int = Depends(is_admin),
 ):
     """手动执行每周清理：至少清零当前轮次，可选同时清零本周打卡计数。"""
-    updated = storage.reset_weekly_experiment_state(
+    entry = execute_weekly_cleanup(
         reset_checkins=req.reset_checkins,
-        reset_week_key=req.reset_checkins,
+        trigger_type="manual",
+        admin_id=admin_id,
     )
     return {
-        "message": "每周清理已执行",
-        "updated_users": updated,
+        "message": entry.get("message") or "每周清理已执行",
+        "updated_users": entry.get("updated_users", 0),
         "reset_checkins": req.reset_checkins,
-        "current_week_key": _current_week_key(),
+        "current_week_key": entry.get("current_week_key") or _current_week_key(),
+        "history_entry": entry,
     }
 
 
@@ -912,6 +919,16 @@ async def retract_weekly_survey_dispatch(
         "message": "周问卷派发状态已撤回",
         **result,
     }
+
+
+@router.get("/checkin/weekly-cleanup/status")
+async def get_weekly_cleanup_runtime_status(
+    history_limit: int = 20,
+    admin_id: int = Depends(is_admin),
+):
+    """查看每周清理自动任务状态与最近执行历史。"""
+    safe_limit = max(1, min(history_limit, 100))
+    return get_weekly_cleanup_status(history_limit=safe_limit)
 
 
 @router.post("/users/export")
@@ -1076,6 +1093,7 @@ async def update_all_settings(
     """更新系统设置（部分更新）"""
     updates.pop("experiment_pages_enabled", None)
     storage.prune_settings_keys(["experiment_pages_enabled"])
+    existing_settings = storage.get_settings()
 
     # 校验打卡题目数量
     if "checkin_questions" in updates:
@@ -1102,6 +1120,7 @@ async def update_all_settings(
                 raise HTTPException(status_code=400, detail=f"{key} 必须是整数")
             if updates[key] < min_v or updates[key] > max_v:
                 raise HTTPException(status_code=400, detail=f"{key} 必须在 {min_v}-{max_v} 之间")
+    updates = prepare_weekly_cleanup_settings_updates(existing_settings, updates)
     settings = storage.update_settings(updates)
     return settings
 

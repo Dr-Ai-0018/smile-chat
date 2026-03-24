@@ -127,6 +127,8 @@ export const adminAPI = {
   getIncompleteCheckins: () => client.get('/admin/checkin/incomplete'),
   triggerWeeklyCleanup: (reset_checkins = false) =>
     client.post('/admin/checkin/weekly-cleanup', { reset_checkins }),
+  getWeeklyCleanupStatus: (history_limit = 20) =>
+    client.get(`/admin/checkin/weekly-cleanup/status?history_limit=${history_limit}`),
   retractWeeklySurveyDispatch: (week_key = null) =>
     client.post('/admin/checkin/weekly-survey/retract', { week_key }),
 
