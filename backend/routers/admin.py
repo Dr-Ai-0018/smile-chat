@@ -33,7 +33,10 @@ from services.ai_service import AIService
 from services.prompt_manager import get_prompt_manager
 from services.chat_logger import get_chat_logger
 from services.session_state import get_session_state
-from services.weekly_survey_service import sync_weekly_survey_records_for_user
+from services.weekly_survey_service import (
+    retract_weekly_survey_notices_for_week,
+    sync_weekly_survey_records_for_user,
+)
 
 router = APIRouter()
 storage = JsonStorage()
@@ -856,6 +859,10 @@ class WeeklyCleanupRequest(PydanticBaseModel):
     reset_checkins: bool = False
 
 
+class WeeklySurveyRetractRequest(PydanticBaseModel):
+    week_key: Optional[str] = None
+
+
 class UserExportRequest(PydanticBaseModel):
     user_ids: List[int]
 
@@ -891,6 +898,19 @@ async def trigger_weekly_cleanup(
         "updated_users": updated,
         "reset_checkins": req.reset_checkins,
         "current_week_key": _current_week_key(),
+    }
+
+
+@router.post("/checkin/weekly-survey/retract")
+async def retract_weekly_survey_dispatch(
+    req: WeeklySurveyRetractRequest,
+    admin_id: int = Depends(is_admin),
+):
+    """撤回指定周次已派发的周问卷通知，允许后续按规则重新派发。"""
+    result = retract_weekly_survey_notices_for_week(req.week_key)
+    return {
+        "message": "周问卷派发状态已撤回",
+        **result,
     }
 
 

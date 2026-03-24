@@ -143,6 +143,74 @@ def sync_weekly_survey_records_for_user(user_id: int) -> List[dict]:
         return synced
 
 
+def retract_weekly_survey_notices_for_week(week_key: Optional[str] = None) -> dict:
+    """
+    撤回指定周次已派发的周问卷通知，但保留达标资格与打卡事实。
+
+    适用于修复问卷链接、错误提前派发等场景。撤回后：
+    1. 删除该周已创建的 system_weekly 通知及其用户已展示/已读状态
+    2. 清空 weekly_survey_record 上的 notice/shown/read 痕迹
+    3. 保留 eligible / qualified_at，便于后续重新派发
+    """
+    target_week = str(week_key or get_current_week_key()).strip()
+    if not target_week:
+        raise ValueError("week_key_required")
+
+    with _sync_lock:
+        records = [
+            item for item in storage.get_weekly_survey_records(limit=0)
+            if str(item.get("week_key") or "").strip() == target_week
+        ]
+
+        affected_users = set()
+        deleted_notice_ids = set()
+        reset_records = 0
+
+        for record in records:
+            user_id = int(record.get("user_id") or 0)
+            notice_id = record.get("notice_id")
+            should_reset_record = False
+
+            if isinstance(notice_id, int) and notice_id > 0:
+                notice = storage.get_notice_by_id(notice_id)
+                if (not notice) or notice.get("source") == "system_weekly":
+                    if notice:
+                        storage.delete_notice(notice_id)
+                        deleted_notice_ids.add(notice_id)
+                    should_reset_record = True
+
+            if record.get("shown_at") or record.get("read_at"):
+                should_reset_record = True
+
+            if should_reset_record:
+                storage.upsert_weekly_survey_record(
+                    user_id=user_id,
+                    week_key=target_week,
+                    updates={
+                        "notice_id": None,
+                        "notice_created_at": None,
+                        "shown_at": None,
+                        "read_at": None,
+                        "notice_title_snapshot": "",
+                        "notice_content_snapshot": "",
+                    },
+                )
+                if user_id > 0:
+                    storage.update_user_experiment_state(
+                        user_id,
+                        {"weekly_survey_popup_shown": False},
+                    )
+                    affected_users.add(user_id)
+                reset_records += 1
+
+        return {
+            "week_key": target_week,
+            "affected_users": len(affected_users),
+            "reset_records": reset_records,
+            "deleted_notices": len(deleted_notice_ids),
+        }
+
+
 def get_latest_pending_weekly_survey_notice(user_id: int) -> Optional[dict]:
     sync_weekly_survey_records_for_user(user_id)
     pending = [

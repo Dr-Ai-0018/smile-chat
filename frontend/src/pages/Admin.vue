@@ -1485,10 +1485,21 @@
                   并将 <code>current_week_key</code> 推进为本周，用于手动切换到新的实验周次。<em>同样不会删除</em> <code>checkin_records.json</code> 等原始数据。</p>
                 </div>
               </div>
+              <div class="explain-block">
+                <span class="explain-icon">↩️</span>
+                <div>
+                  <strong>撤回本周已发周问卷</strong>
+                  <p>用于修复“工作日提前发出问卷”或“问卷链接填晚了”的情况。<br/>
+                  该操作会删除本周已生成的周问卷通知，并清空对应的展示/已读状态，但<em>保留</em> 用户本周是否达标的资格记录；这样他们周末上线时会按当前规则重新收到问卷。</p>
+                </div>
+              </div>
             </div>
             <div class="cleanup-actions">
               <button class="cleanup-btn secondary" @click="runWeeklyCleanup(false)">
                 🔄 仅清空轮次缓存
+              </button>
+              <button class="cleanup-btn warning" @click="retractCurrentWeeklySurveyDispatch">
+                ↩️ 撤回本周已发周问卷
               </button>
               <button class="cleanup-btn danger" @click="runWeeklyCleanup(true)">
                 🗑️ 进入下一周（轮次 + 周统计重置）
@@ -2854,6 +2865,27 @@ const runWeeklyCleanup = async (resetCheckins = false) => {
   } catch (err) {
     console.error('执行每周清理失败:', err)
     toast.error(err.response?.data?.detail || '执行每周清理失败')
+  }
+}
+
+const retractCurrentWeeklySurveyDispatch = async () => {
+  const confirmed = await confirm({
+    title: '撤回本周已发周问卷',
+    message: '这会删除本周已经生成的周问卷通知，并清空对应的展示/已读状态，但不会删除打卡记录，也不会取消用户已达标资格。撤回后，符合条件的用户会在周末按当前规则重新收到问卷。确定继续吗？',
+    type: 'danger',
+    confirmText: '确认撤回',
+  })
+  if (!confirmed) return
+
+  try {
+    const res = await adminAPI.retractWeeklySurveyDispatch()
+    toast.success(
+      `${res.message}：清理了 ${res.deleted_notices} 条通知，重置了 ${res.reset_records} 条周问卷记录，涉及 ${res.affected_users} 位用户`
+    )
+    await Promise.all([loadUsers(), loadDetailedStats(), loadStats()])
+  } catch (err) {
+    console.error('撤回本周周问卷失败:', err)
+    toast.error(err.response?.data?.detail || '撤回本周周问卷失败')
   }
 }
 
@@ -5063,6 +5095,16 @@ onUnmounted(() => {
 
 .cleanup-btn.secondary:hover {
   background: rgba(255, 255, 255, 0.18);
+}
+
+.cleanup-btn.warning {
+  background: rgba(245, 158, 11, 0.14);
+  color: #fbbf24;
+  border: 1px solid rgba(245, 158, 11, 0.24);
+}
+
+.cleanup-btn.warning:hover {
+  background: rgba(245, 158, 11, 0.24);
 }
 
 .cleanup-btn.danger {

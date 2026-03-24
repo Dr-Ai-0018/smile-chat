@@ -127,6 +127,8 @@ export const adminAPI = {
   getIncompleteCheckins: () => client.get('/admin/checkin/incomplete'),
   triggerWeeklyCleanup: (reset_checkins = false) =>
     client.post('/admin/checkin/weekly-cleanup', { reset_checkins }),
+  retractWeeklySurveyDispatch: (week_key = null) =>
+    client.post('/admin/checkin/weekly-survey/retract', { week_key }),
 
   // 系统提示词管理
   listSystemPrompts: () => client.get('/admin/system-prompts'),
