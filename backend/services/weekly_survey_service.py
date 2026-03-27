@@ -41,11 +41,30 @@ def _runtime_setting_int(key: str, default: int) -> int:
         return default
 
 
-def build_weekly_survey_content(week_key: str, weekly_count: int, survey_url: str) -> tuple[str, str]:
+def _render_weekly_survey_template(template: str, context: Dict[str, str]) -> str:
+    rendered = str(template or "")
+    for key, value in context.items():
+        rendered = rendered.replace(f"{{{{{key}}}}}", str(value))
+    return rendered.strip()
+
+
+def build_weekly_survey_content(
+    week_key: str,
+    weekly_count: int,
+    survey_url: str,
+    content_template: str = "",
+) -> tuple[str, str]:
     title = f"{week_key} 周问卷提醒"
-    content = f"你在 {week_key} 已完成 {weekly_count} 次打卡，请填写该周问卷。"
-    if survey_url:
-        content += f"\n\n[点击填写该周问卷]({survey_url})"
+    context = {
+        "week_key": week_key,
+        "weekly_count": str(weekly_count),
+        "survey_url": survey_url,
+    }
+    content = _render_weekly_survey_template(content_template, context)
+    if not content:
+        content = f"你在 {week_key} 已完成 {weekly_count} 次打卡，请填写该周问卷。"
+        if survey_url:
+            content += f"\n\n[点击填写该周问卷]({survey_url})"
     return title, content
 
 
@@ -63,6 +82,7 @@ def sync_weekly_survey_records_for_user(user_id: int) -> List[dict]:
     with _sync_lock:
         settings = storage.get_settings()
         survey_url = str(settings.get("weekly_survey_url", "") or "").strip()
+        survey_content_template = str(settings.get("weekly_survey_content_template", "") or "").strip()
         required = _runtime_setting_int(
             "min_weekly_checkins_for_survey",
             DEFAULT_MIN_WEEKLY_CHECKINS_FOR_SURVEY,
@@ -113,7 +133,12 @@ def sync_weekly_survey_records_for_user(user_id: int) -> List[dict]:
             )
 
             if can_dispatch_notice:
-                title, content = build_weekly_survey_content(week_key, checkin_count, survey_url)
+                title, content = build_weekly_survey_content(
+                    week_key,
+                    checkin_count,
+                    survey_url,
+                    survey_content_template,
+                )
                 notice = storage.create_notice({
                     "title": title,
                     "content": content,

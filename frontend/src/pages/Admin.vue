@@ -1453,8 +1453,15 @@
           </div>
 
           <div class="checkin-card">
-            <h3>周末问卷链接</h3>
-            <p class="config-desc">本周打卡达标后，周末上线时自动弹出此链接（通过通知收件箱推送）</p>
+            <h3>周末问卷消息</h3>
+            <p v-pre class="config-desc">支持 Markdown 渲染，可直接插入图片、链接和二维码图。可用变量：<code>{{week_key}}</code>、<code>{{weekly_count}}</code>、<code>{{survey_url}}</code></p>
+            <textarea
+              v-model="checkinSettings.weekly_survey_content_template"
+              class="weekly-survey-textarea"
+              rows="8"
+              placeholder="例如：&#10;# {{week_key}} 周问卷&#10;&#10;![问卷海报](https://example.com/poster.png)&#10;&#10;你本周已完成 **{{weekly_count}}** 次打卡。&#10;&#10;[点击填写问卷]({{survey_url}})"
+            ></textarea>
+            <p v-pre class="config-desc">如果模板里用了 <code>{{survey_url}}</code>，这里填默认问卷链接；留空也可以。</p>
             <input
               v-model="checkinSettings.weekly_survey_url"
               type="url"
@@ -2885,6 +2892,7 @@ const DEFAULT_CHECKIN_QUESTIONS = [
 
 const checkinSettings = ref({
   weekly_survey_url: '',
+  weekly_survey_content_template: '',
   checkin_questions: [...DEFAULT_CHECKIN_QUESTIONS],
   weekly_cleanup_auto_enabled: false,
 })
@@ -2900,6 +2908,7 @@ const loadCheckinSettings = async () => {
   try {
     const res = await settingsAPI.getAdmin()
     checkinSettings.value.weekly_survey_url = res.weekly_survey_url || ''
+    checkinSettings.value.weekly_survey_content_template = res.weekly_survey_content_template || ''
     checkinSettings.value.checkin_questions = res.checkin_questions?.length
       ? res.checkin_questions
       : [...DEFAULT_CHECKIN_QUESTIONS]
@@ -2934,6 +2943,7 @@ const saveCheckinSettings = async () => {
   try {
     await settingsAPI.updateAdmin({
       weekly_survey_url: checkinSettings.value.weekly_survey_url,
+      weekly_survey_content_template: checkinSettings.value.weekly_survey_content_template,
       checkin_questions: validQuestions,
       weekly_cleanup_auto_enabled: checkinSettings.value.weekly_cleanup_auto_enabled,
     })
@@ -4981,6 +4991,25 @@ onUnmounted(() => {
 .prompt-textarea:focus {
   outline: none;
   border-color: rgba(251, 191, 36, 0.5);
+}
+
+.weekly-survey-textarea {
+  width: 100%;
+  min-height: 220px;
+  padding: 0.95rem 1rem;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 14px;
+  color: #fff;
+  font-size: 0.95rem;
+  line-height: 1.65;
+  resize: vertical;
+}
+
+.weekly-survey-textarea:focus {
+  outline: none;
+  border-color: rgba(251, 191, 36, 0.5);
+  box-shadow: 0 0 0 3px rgba(251, 191, 36, 0.08);
 }
 
 .modal-btn.accent {

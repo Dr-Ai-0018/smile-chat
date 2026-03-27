@@ -17,7 +17,7 @@
           <!-- 内容 -->
           <div class="notice-body">
             <h3 class="notice-title">{{ notice.title }}</h3>
-            <p class="notice-content" v-html="renderedContent"></p>
+            <div class="notice-content markdown-content" v-html="renderedContent"></div>
             <div class="notice-time">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <circle cx="12" cy="12" r="10"/>
@@ -48,6 +48,8 @@
 
 <script setup>
 import { ref, computed } from 'vue'
+import { marked } from 'marked'
+import DOMPurify from 'dompurify'
 import { formatShanghaiDateTime } from '../utils/datetime'
 
 const props = defineProps({
@@ -59,12 +61,16 @@ const emit = defineEmits(['read'])
 
 const cardRef = ref(null)
 
+marked.setOptions({
+  gfm: true,
+  breaks: true,
+})
+
 const renderedContent = computed(() => {
   if (!props.notice?.content) return ''
-  // 将 Markdown 链接 [text](url) 转为可点击的 <a>
-  return props.notice.content
-    .replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
-    .replace(/\n/g, '<br>')
+  const rawHtml = marked.parse(props.notice.content)
+  const cleanHtml = DOMPurify.sanitize(rawHtml)
+  return cleanHtml.replace(/<a\s+/g, '<a target="_blank" rel="noopener noreferrer" ')
 })
 
 const formatTime = (iso) => {
@@ -167,12 +173,64 @@ const handleConfirm = () => {
   color: rgba(255, 255, 255, 0.8);
   line-height: 1.7;
   margin: 0 0 0.875rem 0;
-  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.markdown-content :deep(*:first-child) {
+  margin-top: 0;
+}
+
+.markdown-content :deep(*:last-child) {
+  margin-bottom: 0;
+}
+
+.markdown-content :deep(p),
+.markdown-content :deep(ul),
+.markdown-content :deep(ol),
+.markdown-content :deep(blockquote) {
+  margin: 0 0 0.8rem;
+}
+
+.markdown-content :deep(ul),
+.markdown-content :deep(ol) {
+  padding-left: 1.2rem;
 }
 
 .notice-content :deep(a) {
   color: #FDD152;
   text-decoration: underline;
+}
+
+.notice-content :deep(img) {
+  display: block;
+  width: auto;
+  max-width: min(100%, 300px);
+  max-height: 50vh;
+  height: auto;
+  border-radius: 16px;
+  margin: 0.9rem 0;
+  object-fit: contain;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.notice-content :deep(code) {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  padding: 0.1rem 0.35rem;
+  font-size: 0.86em;
+}
+
+.notice-content :deep(pre) {
+  margin: 0 0 0.9rem;
+  padding: 0.85rem 1rem;
+  background: rgba(0, 0, 0, 0.24);
+  border-radius: 12px;
+  overflow-x: auto;
+}
+
+.notice-content :deep(pre code) {
+  background: transparent;
+  padding: 0;
 }
 
 .notice-time {

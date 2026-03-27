@@ -1103,6 +1103,13 @@ async def update_all_settings(
         updates["checkin_questions"] = [q for q in qs if isinstance(q, str) and q.strip()]
         if len(updates["checkin_questions"]) == 0:
             raise HTTPException(status_code=400, detail="打卡题目不能全为空")
+    str_fields = [
+        "weekly_survey_url",
+        "weekly_survey_content_template",
+    ]
+    for key in str_fields:
+        if key in updates and updates[key] is not None:
+            updates[key] = str(updates[key]).strip()
     int_fields = {
         "memory_compress_threshold": (0, 10000),
         "chat_timer_duration_minutes": (1, 240),

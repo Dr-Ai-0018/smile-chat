@@ -48,7 +48,7 @@
 
             <Transition name="expand">
               <div v-if="expandedId === notice.id" class="item-content">
-                <p v-html="renderContent(notice.content)"></p>
+                <div class="item-content-markdown" v-html="renderContent(notice.content)"></div>
                 <div class="item-meta">
                   <span v-if="notice.read_at" class="read-label">
                     <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
@@ -71,7 +71,9 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref } from 'vue'
+import { marked } from 'marked'
+import DOMPurify from 'dompurify'
 import { formatShanghaiMonthDay, formatShanghaiTime, getShanghaiDayNumber } from '../utils/datetime'
 
 const props = defineProps({
@@ -84,6 +86,11 @@ const emit = defineEmits(['open', 'read'])
 const panelOpen = ref(false)
 const expandedId = ref(null)
 const inboxRef = ref(null)
+
+marked.setOptions({
+  gfm: true,
+  breaks: true,
+})
 
 const togglePanel = () => {
   panelOpen.value = !panelOpen.value
@@ -108,9 +115,9 @@ const toggleExpand = (notice) => {
 
 const renderContent = (content) => {
   if (!content) return ''
-  return content
-    .replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
-    .replace(/\n/g, '<br>')
+  const rawHtml = marked.parse(content)
+  const cleanHtml = DOMPurify.sanitize(rawHtml)
+  return cleanHtml.replace(/<a\s+/g, '<a target="_blank" rel="noopener noreferrer" ')
 }
 
 const formatTimeShort = (iso) => {
@@ -341,17 +348,69 @@ const formatTimeShort = (iso) => {
   border-top: 1px dashed #eee;
 }
 
-.item-content p {
+.item-content-markdown {
   font-size: 0.83rem;
   color: #666;
   line-height: 1.65;
   margin: 0 0 0.5rem 0;
-  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
-.item-content p :deep(a) {
+.item-content-markdown :deep(*:first-child) {
+  margin-top: 0;
+}
+
+.item-content-markdown :deep(*:last-child) {
+  margin-bottom: 0;
+}
+
+.item-content-markdown :deep(p),
+.item-content-markdown :deep(ul),
+.item-content-markdown :deep(ol),
+.item-content-markdown :deep(blockquote) {
+  margin: 0 0 0.7rem;
+}
+
+.item-content-markdown :deep(ul),
+.item-content-markdown :deep(ol) {
+  padding-left: 1.15rem;
+}
+
+.item-content-markdown :deep(a) {
   color: #4a9edd;
   text-decoration: underline;
+}
+
+.item-content-markdown :deep(img) {
+  display: block;
+  width: auto;
+  max-width: min(100%, 240px);
+  height: auto;
+  max-height: 260px;
+  margin: 0.7rem 0;
+  border-radius: 12px;
+  object-fit: contain;
+  background: #f6f7fb;
+}
+
+.item-content-markdown :deep(code) {
+  background: #f3f4f6;
+  border-radius: 5px;
+  padding: 0.1rem 0.3rem;
+  font-size: 0.86em;
+}
+
+.item-content-markdown :deep(pre) {
+  margin: 0 0 0.75rem;
+  padding: 0.7rem 0.8rem;
+  background: #f6f7fb;
+  border-radius: 10px;
+  overflow-x: auto;
+}
+
+.item-content-markdown :deep(pre code) {
+  background: transparent;
+  padding: 0;
 }
 
 .item-meta {
