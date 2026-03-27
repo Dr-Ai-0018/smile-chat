@@ -5036,6 +5036,12 @@ onUnmounted(() => {
 }
 
 /* ==================== 打卡设置页 ==================== */
+.checkin-panel {
+  max-height: 100%;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+}
+
 .checkin-layout {
   display: grid;
   grid-template-columns: 1fr 1fr;
