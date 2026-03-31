@@ -83,6 +83,7 @@ def _sanitize_export_name(value: str, fallback: str) -> str:
 
 def _write_json_atomic(path: Path, payload: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path: Optional[Path] = None
     with tempfile.NamedTemporaryFile(
         mode="w",
         encoding="utf-8",
@@ -92,7 +93,13 @@ def _write_json_atomic(path: Path, payload: Any) -> None:
     ) as tmp:
         json.dump(payload, tmp, ensure_ascii=False, indent=2)
         tmp_path = Path(tmp.name)
-    tmp_path.replace(path)
+    try:
+        tmp_path.replace(path)
+    except PermissionError:
+        # Windows 上极少数环境会在 replace 阶段拒绝访问，回退为直接覆盖写入。
+        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        if tmp_path and tmp_path.exists():
+            tmp_path.unlink(missing_ok=True)
 
 
 def _copy_file(source: Path, destination: Path) -> None:

@@ -180,12 +180,15 @@ CORS_ALLOW_ORIGIN_REGEX=^https?://(localhost|127\.0\.0\.1)(:\d+)?$
 当前导出功能分为两种入口：
 
 - 管理后台：在“用户管理”里勾选用户后创建导出任务。后端会先落盘复制原始数据，再把整个任务目录打包成 zip；管理员可以查看任务历史，并反复下载已完成归档。
-- 服务器脚本：运行 `python backend/export_user_data.py` 后会进入 `input()` 交互，依次询问用户 ID、任务标签和导出根目录。
+- 服务器脚本：运行 `python backend/export_user_data.py` 后会先自动探测现有用户，展示每个用户的邀请码核验状态与聊天消息数，再进入 `input()` 交互；支持输入 `all`、`msg`、`1-50`、`1,3,8-12`、`list` 这类选择方式。
 
 脚本也支持非交互参数模式，例如：
 
 ```bash
 python backend/export_user_data.py --user-ids 1 2 3 --label manual-backup
+python backend/export_user_data.py --user-ids all --label full-backup --non-interactive
+python backend/export_user_data.py --user-ids msg --label only-users-with-messages --non-interactive
+python backend/export_user_data.py --user-ids 1-50 --label batch-a --non-interactive
 ```
 
 默认导出目录为 `zip/user_exports/tasks/<task_id>/`，其中会包含：
