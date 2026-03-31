@@ -107,6 +107,20 @@ export const adminAPI = {
   updateUserCondition: (userId, condition) =>
     client.put(`/admin/user/${userId}/condition`, { condition }),
   exportUsers: (userIds) => client.post('/admin/users/export', { user_ids: userIds }),
+  createUserExportTask: (userIds, label = '') =>
+    client.post('/admin/export-tasks', { user_ids: userIds, label }),
+  listUserExportTasks: (limit = 20) =>
+    client.get(`/admin/export-tasks?limit=${limit}`),
+  getUserExportTask: (taskId) =>
+    client.get(`/admin/export-tasks/${taskId}`),
+  downloadUserExportTask: (taskId) => {
+    const token = localStorage.getItem('token')
+    return axios.get(`${API_BASE_URL}/admin/export-tasks/${taskId}/download`, {
+      responseType: 'blob',
+      timeout: 300000,
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+  },
   exportUsersZip: (userIds) => {
     const token = localStorage.getItem('token')
     return axios.post(`${API_BASE_URL}/admin/users/export-zip`, { user_ids: userIds }, {

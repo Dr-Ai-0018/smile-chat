@@ -242,9 +242,9 @@
               class="bulk-export-btn"
               :disabled="selectedUserIds.size === 0"
               @click="exportSelectedUsers"
-              title="导出选中用户的 ZIP 数据包"
+              title="为选中用户创建落盘导出任务"
             >
-              批量导出 ZIP ({{ selectedUserIds.size }})
+              创建导出任务 ({{ selectedUserIds.size }})
             </button>
             <input
               v-model="userSearch"
@@ -352,6 +352,101 @@
               </tr>
             </tbody>
           </table>
+        </div>
+
+        <div class="export-task-card">
+          <div class="export-task-head">
+            <div>
+              <h3>导出任务历史</h3>
+              <p>先落盘复制，再整体压缩。完成后的归档会保留在服务器上，可重复下载。</p>
+            </div>
+            <button class="export-task-refresh" @click="loadExportTasks">
+              刷新列表
+            </button>
+          </div>
+
+          <div v-if="activeExportTask" class="export-task-active">
+            <div class="export-task-active-head">
+              <strong>当前任务</strong>
+              <span :class="['export-task-badge', exportStatusClass(activeExportTask.status)]">
+                {{ formatExportStatus(activeExportTask.status) }}
+              </span>
+            </div>
+            <div class="export-task-progressbar">
+              <div class="export-task-progressbar-fill" :style="{ width: `${activeExportTask.overall_progress || 0}%` }"></div>
+            </div>
+            <div class="export-task-meta-grid">
+              <span>进度 {{ activeExportTask.overall_progress || 0 }}%</span>
+              <span>用户 {{ activeExportTask.processed_users || 0 }}/{{ activeExportTask.total_users || 0 }}</span>
+              <span>当前 {{ activeExportTask.current_username || '等待中' }}</span>
+              <span>{{ activeExportTask.current_step || '-' }}</span>
+            </div>
+            <div class="export-task-active-actions">
+              <button class="modal-btn confirm" @click="openExportTaskModal(activeExportTask.task_id)">
+                查看详情
+              </button>
+              <button
+                v-if="activeExportTask.can_download"
+                class="modal-btn confirm"
+                @click="downloadExportTask(activeExportTask)"
+              >
+                下载归档
+              </button>
+            </div>
+          </div>
+
+          <div v-if="exportTasks.length === 0" class="export-task-empty">
+            暂无导出任务记录
+          </div>
+          <div v-else class="export-task-table">
+            <table>
+              <thead>
+                <tr>
+                  <th>创建时间</th>
+                  <th>状态</th>
+                  <th>用户数</th>
+                  <th>进度</th>
+                  <th>当前步骤</th>
+                  <th>归档文件</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="task in exportTasks" :key="task.task_id">
+                  <td>{{ formatDate(task.created_at) }}</td>
+                  <td>
+                    <span :class="['export-task-badge', exportStatusClass(task.status)]">
+                      {{ formatExportStatus(task.status) }}
+                    </span>
+                  </td>
+                  <td>{{ task.total_users || 0 }}</td>
+                  <td>{{ task.overall_progress || 0 }}%</td>
+                  <td>{{ task.current_step || '-' }}</td>
+                  <td>{{ task.archive_name || '-' }}</td>
+                  <td class="export-task-actions">
+                    <button class="action-btn view" @click="openExportTaskModal(task.task_id)" title="查看任务详情">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                        <circle cx="12" cy="12" r="3"/>
+                      </svg>
+                    </button>
+                    <button
+                      class="action-btn export-download"
+                      :disabled="!task.can_download"
+                      @click="downloadExportTask(task)"
+                      title="下载归档"
+                    >
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M12 3v12"/>
+                        <path d="M7 10l5 5 5-5"/>
+                        <path d="M5 21h14"/>
+                      </svg>
+                    </button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </div>
       </section>
 
@@ -1603,48 +1698,86 @@
             <template v-else-if="exportState === 'error'">✕</template>
             <template v-else>⏳</template>
           </span>
-          <h3>{{ exportState === 'ready' ? '导出已完成' : exportState === 'error' ? '导出失败' : '正在打包导出' }}</h3>
+          <h3>{{ exportState === 'ready' ? '导出任务已完成' : exportState === 'error' ? '导出任务失败' : '导出任务进行中' }}</h3>
         </div>
         <p class="modal-message">
           <template v-if="exportState === 'packaging'">
-            正在整理选中用户的原始数据并打包为 ZIP，请稍候，不要关闭页面。
+            {{ exportModalSummary }}
           </template>
           <template v-else-if="exportState === 'ready'">
-            已为 {{ exportTargetCount }} 位用户生成 ZIP 数据包，浏览器已尝试自动下载。
+            已为 {{ exportTargetCount }} 位用户生成任务归档，可以反复下载。
           </template>
           <template v-else>
             {{ exportErrorMessage || '导出失败，请稍后重试。' }}
           </template>
         </p>
-        <div v-if="exportState === 'packaging'" class="export-progress">
-          <div class="export-spinner"></div>
-          <span>打包中...</span>
+        <div v-if="exportTaskDetail" class="export-task-modal-body">
+          <div class="export-progress-card">
+            <div class="export-progress-topline">
+              <strong>{{ exportTaskDetail.current_step || '-' }}</strong>
+              <span>{{ exportTaskDetail.overall_progress || 0 }}%</span>
+            </div>
+            <div class="export-progressbar">
+              <div class="export-progressbar-fill" :style="{ width: `${exportTaskDetail.overall_progress || 0}%` }"></div>
+            </div>
+            <div class="export-progress-stats">
+              <span>已完成 {{ exportTaskDetail.processed_users || 0 }}/{{ exportTaskDetail.total_users || 0 }} 位用户</span>
+              <span>当前用户：{{ exportTaskDetail.current_username || '无' }}</span>
+              <span>压缩阶段：{{ exportTaskDetail.zip_progress || 0 }}%</span>
+            </div>
+            <div class="export-paths">
+              <div><strong>任务目录：</strong>{{ exportTaskDetail.task_dir || '-' }}</div>
+              <div><strong>数据目录：</strong>{{ exportTaskDetail.package_dir || '-' }}</div>
+              <div><strong>归档文件：</strong>{{ exportTaskDetail.archive_path || '-' }}</div>
+            </div>
+          </div>
+
+          <div v-if="exportTaskDetail.users?.length" class="export-user-progress-list">
+            <div
+              v-for="item in exportTaskDetail.users"
+              :key="`export-user-${item.user_id}`"
+              class="export-user-progress-item"
+            >
+              <div class="export-user-progress-head">
+                <strong>{{ item.username }}</strong>
+                <span :class="['export-task-badge', exportStatusClass(item.status)]">
+                  {{ formatExportStatus(item.status) }}
+                </span>
+              </div>
+              <div class="export-user-progressbar">
+                <div class="export-user-progressbar-fill" :style="{ width: `${item.progress || 0}%` }"></div>
+              </div>
+              <div class="export-user-progress-meta">
+                <span>ID {{ item.user_id }}</span>
+                <span>{{ item.progress || 0 }}%</span>
+                <span>{{ item.current_step || '-' }}</span>
+              </div>
+            </div>
+          </div>
         </div>
         <div v-if="exportState === 'ready'" class="export-ready">
           <div class="export-file">{{ exportFilename }}</div>
-          <a
-            v-if="exportDownloadUrl"
-            class="download-link"
-            :href="exportDownloadUrl"
-            :download="exportFilename"
-          >
-            如果没有自动下载，点击这里手动下载
-          </a>
         </div>
         <div class="modal-actions">
           <button
-            v-if="exportState === 'ready' && exportDownloadUrl"
+            v-if="currentExportTaskId"
+            class="modal-btn confirm"
+            @click="refreshCurrentExportTask"
+          >
+            刷新进度
+          </button>
+          <button
+            v-if="exportTaskDetail?.can_download"
             class="modal-btn confirm"
             @click="downloadPreparedExport"
           >
-            再次下载
+            下载归档
           </button>
           <button
             class="modal-btn cancel"
-            :disabled="exportState === 'packaging'"
             @click="closeExportModal"
           >
-            {{ exportState === 'packaging' ? '打包中...' : '关闭' }}
+            关闭
           </button>
         </div>
       </div>
@@ -1705,9 +1838,11 @@ const selectAllCheckbox = ref(null)
 const showExportModal = ref(false)
 const exportState = ref('idle')
 const exportFilename = ref('')
-const exportDownloadUrl = ref('')
 const exportTargetCount = ref(0)
 const exportErrorMessage = ref('')
+const exportTasks = ref([])
+const exportTaskDetail = ref(null)
+const currentExportTaskId = ref('')
 
 // 用户详情弹窗
 const showUserModal = ref(false)
@@ -1798,6 +1933,7 @@ const barChartRef = ref(null)
 const doughnutChartRef = ref(null)
 let barChartInstance = null
 let doughnutChartInstance = null
+let exportTaskPollingTimer = null
 
 // 提示系统
 const promptGroups = ref([])
@@ -1867,6 +2003,16 @@ const filteredUsers = computed(() => {
   )
 })
 
+const activeExportTask = computed(() =>
+  exportTasks.value.find(task => ['queued', 'running', 'packaging'].includes(task.status))
+)
+
+const exportModalSummary = computed(() => {
+  const task = exportTaskDetail.value
+  if (!task) return '正在准备导出任务，请稍候。'
+  return `${task.current_step || '正在处理'}，整体进度 ${task.overall_progress || 0}%（${task.processed_users || 0}/${task.total_users || 0} 位用户）`
+})
+
 // 过滤邀请码
 const filteredInvites = computed(() => {
   let base = invites.value
@@ -1931,13 +2077,6 @@ const getLocalDateStamp = () => {
   return getShanghaiDateStamp()
 }
 
-const revokeExportUrl = () => {
-  if (exportDownloadUrl.value) {
-    URL.revokeObjectURL(exportDownloadUrl.value)
-    exportDownloadUrl.value = ''
-  }
-}
-
 const parseDownloadFilename = (headers = {}) => {
   const disposition = headers['content-disposition'] || headers['Content-Disposition'] || ''
   const utf8Match = disposition.match(/filename\*\s*=\s*UTF-8''([^;]+)/i)
@@ -1953,26 +2092,37 @@ const parseDownloadFilename = (headers = {}) => {
   return `用户全量原始数据_${getLocalDateStamp()}.zip`
 }
 
-const triggerBrowserDownload = () => {
-  if (!exportDownloadUrl.value) return
+const triggerBrowserDownload = (blob, filename) => {
+  if (!blob) return
+  const downloadUrl = URL.createObjectURL(blob)
   const a = document.createElement('a')
-  a.href = exportDownloadUrl.value
-  a.download = exportFilename.value || `用户全量原始数据_${getLocalDateStamp()}.zip`
+  a.href = downloadUrl
+  a.download = filename || `用户全量原始数据_${getLocalDateStamp()}.zip`
   a.click()
+  window.setTimeout(() => URL.revokeObjectURL(downloadUrl), 1000)
 }
 
 const closeExportModal = () => {
-  if (exportState.value === 'packaging') return
   showExportModal.value = false
-  exportState.value = 'idle'
-  exportFilename.value = ''
-  exportTargetCount.value = 0
-  exportErrorMessage.value = ''
-  revokeExportUrl()
 }
 
-const downloadPreparedExport = () => {
-  triggerBrowserDownload()
+const syncExportStateFromTask = (task) => {
+  if (!task) {
+    exportState.value = 'idle'
+    return
+  }
+  exportTargetCount.value = task.total_users || 0
+  exportFilename.value = task.archive_name || ''
+  exportErrorMessage.value = task.error_message || ''
+  if (task.status === 'completed') {
+    exportState.value = 'ready'
+    return
+  }
+  if (task.status === 'failed') {
+    exportState.value = 'error'
+    return
+  }
+  exportState.value = 'packaging'
 }
 
 const readExportErrorMessage = async (err) => {
@@ -1985,6 +2135,92 @@ const readExportErrorMessage = async (err) => {
     } catch {}
   }
   return err?.response?.data?.detail || '批量导出失败'
+}
+
+const loadExportTasks = async () => {
+  try {
+    const res = await adminAPI.listUserExportTasks(30)
+    exportTasks.value = res.tasks || []
+    const runningTask = exportTasks.value.find(task => ['queued', 'running', 'packaging'].includes(task.status))
+    if (runningTask && runningTask.task_id !== currentExportTaskId.value) {
+      currentExportTaskId.value = runningTask.task_id
+      startExportTaskPolling(runningTask.task_id)
+    }
+    if (!runningTask && currentExportTaskId.value && !showExportModal.value) {
+      stopExportTaskPolling()
+    }
+  } catch (err) {
+    console.error('加载导出任务失败:', err)
+  }
+}
+
+const loadExportTaskDetail = async (taskId, options = {}) => {
+  if (!taskId) return null
+  const { silent = false } = options
+  try {
+    const res = await adminAPI.getUserExportTask(taskId)
+    exportTaskDetail.value = res
+    currentExportTaskId.value = res.task_id
+    syncExportStateFromTask(res)
+    await loadExportTasks()
+    if (!['queued', 'running', 'packaging'].includes(res.status)) {
+      stopExportTaskPolling()
+    }
+    return res
+  } catch (err) {
+    console.error('加载导出任务详情失败:', err)
+    if (!silent) {
+      toast.error(err.response?.data?.detail || '加载导出任务失败')
+    }
+    return null
+  }
+}
+
+const stopExportTaskPolling = () => {
+  if (exportTaskPollingTimer) {
+    clearInterval(exportTaskPollingTimer)
+    exportTaskPollingTimer = null
+  }
+}
+
+const startExportTaskPolling = (taskId) => {
+  stopExportTaskPolling()
+  if (!taskId) return
+  exportTaskPollingTimer = window.setInterval(() => {
+    loadExportTaskDetail(taskId, { silent: true })
+  }, 1500)
+}
+
+const openExportTaskModal = async (taskId) => {
+  showExportModal.value = true
+  const task = await loadExportTaskDetail(taskId)
+  if (task && ['queued', 'running', 'packaging'].includes(task.status)) {
+    startExportTaskPolling(task.task_id)
+  }
+}
+
+const refreshCurrentExportTask = async () => {
+  if (!currentExportTaskId.value) return
+  await loadExportTaskDetail(currentExportTaskId.value)
+}
+
+const downloadExportTask = async (task) => {
+  if (!task?.task_id || !task.can_download) return
+  try {
+    const res = await adminAPI.downloadUserExportTask(task.task_id)
+    const filename = parseDownloadFilename(res.headers) || task.archive_name
+    const blob = new Blob([res.data], { type: 'application/zip' })
+    triggerBrowserDownload(blob, filename)
+    toast.success(`已开始下载 ${filename}`)
+  } catch (err) {
+    console.error('下载导出归档失败:', err)
+    toast.error(await readExportErrorMessage(err))
+  }
+}
+
+const downloadPreparedExport = async () => {
+  if (!exportTaskDetail.value?.can_download) return
+  await downloadExportTask(exportTaskDetail.value)
 }
 
 // 多选操作
@@ -2006,22 +2242,23 @@ const toggleSelectAll = (e) => {
 const exportSelectedUsers = async () => {
   if (selectedUserIds.value.size === 0) return
   const ids = [...selectedUserIds.value]
-  revokeExportUrl()
   exportTargetCount.value = ids.length
   exportFilename.value = ''
   exportErrorMessage.value = ''
   exportState.value = 'packaging'
+  exportTaskDetail.value = null
+  currentExportTaskId.value = ''
   showExportModal.value = true
   try {
-    const res = await adminAPI.exportUsersZip(ids)
-    const blob = new Blob([res.data], { type: 'application/zip' })
-    exportDownloadUrl.value = URL.createObjectURL(blob)
-    exportFilename.value = parseDownloadFilename(res.headers)
-    exportState.value = 'ready'
-    triggerBrowserDownload()
-    toast.success(`已打包 ${ids.length} 位用户的数据`)
+    const task = await adminAPI.createUserExportTask(ids)
+    exportTaskDetail.value = task
+    currentExportTaskId.value = task.task_id
+    syncExportStateFromTask(task)
+    await loadExportTasks()
+    startExportTaskPolling(task.task_id)
+    toast.success(`已创建 ${ids.length} 位用户的导出任务`)
   } catch (err) {
-    console.error('批量导出失败:', err)
+    console.error('创建导出任务失败:', err)
     exportState.value = 'error'
     exportErrorMessage.value = await readExportErrorMessage(err)
     toast.error(exportErrorMessage.value)
@@ -2787,6 +3024,25 @@ const formatCondition = (condition) => {
   return map[condition] || '无表露'
 }
 
+const formatExportStatus = (status) => {
+  const map = {
+    queued: '排队中',
+    running: '导出中',
+    packaging: '压缩中',
+    completed: '已完成',
+    failed: '失败',
+    pending: '待处理',
+  }
+  return map[status] || status || '-'
+}
+
+const exportStatusClass = (status) => {
+  if (status === 'completed') return 'success'
+  if (status === 'failed') return 'error'
+  if (status === 'running' || status === 'packaging') return 'normal'
+  return 'muted'
+}
+
 const formatLatency = (value) => {
   if (value === null || value === undefined || value === '') return '-'
   const n = Number(value)
@@ -3029,7 +3285,7 @@ watch(activeTab, async (tab) => {
     await Promise.all([loadCheckinSettings(), loadWeeklyCleanupStatus()])
   }
   if (tab === 'users') {
-    await loadUsers()
+    await Promise.all([loadUsers(), loadExportTasks()])
   }
 })
 
@@ -3051,6 +3307,7 @@ onMounted(async () => {
   await loadStats()
   await loadDetailedStats()
   loadUsers()
+  loadExportTasks()
   loadInvites()
   loadInviteCodeSetting()
   loadAllMemory()
@@ -3063,7 +3320,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
-  revokeExportUrl()
+  stopExportTaskPolling()
 })
 </script>
 
@@ -3383,6 +3640,153 @@ onUnmounted(() => {
   background: rgba(99, 102, 241, 0.35);
 }
 
+.export-task-card {
+  margin-top: 1.2rem;
+  padding: 1.1rem;
+  border-radius: 14px;
+  background: rgba(0, 0, 0, 0.22);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.export-task-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: flex-start;
+  margin-bottom: 1rem;
+}
+
+.export-task-head h3 {
+  margin: 0 0 0.35rem;
+  color: #ffd700;
+}
+
+.export-task-head p {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.65);
+  font-size: 0.88rem;
+}
+
+.export-task-refresh {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.06);
+  color: #fff;
+  border-radius: 8px;
+  padding: 0.55rem 0.9rem;
+  cursor: pointer;
+}
+
+.export-task-active {
+  margin-bottom: 1rem;
+  padding: 0.95rem;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.export-task-active-head,
+.export-user-progress-head,
+.export-progress-topline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.export-task-meta-grid,
+.export-progress-stats,
+.export-user-progress-meta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.45rem 0.9rem;
+  margin-top: 0.8rem;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 0.84rem;
+}
+
+.export-task-active-actions {
+  display: flex;
+  gap: 0.75rem;
+  margin-top: 0.9rem;
+}
+
+.export-task-progressbar,
+.export-progressbar,
+.export-user-progressbar {
+  width: 100%;
+  height: 10px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.08);
+  margin-top: 0.8rem;
+}
+
+.export-task-progressbar-fill,
+.export-progressbar-fill,
+.export-user-progressbar-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #38bdf8 0%, #facc15 100%);
+}
+
+.export-task-table {
+  overflow-x: auto;
+}
+
+.export-task-table table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.export-task-table th,
+.export-task-table td {
+  padding: 0.8rem 0.65rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  text-align: left;
+  font-size: 0.86rem;
+}
+
+.export-task-empty {
+  padding: 1rem 0;
+  color: rgba(255, 255, 255, 0.58);
+}
+
+.export-task-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.export-task-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 62px;
+  padding: 0.24rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.74rem;
+  font-weight: 700;
+}
+
+.export-task-badge.success {
+  color: #22c55e;
+  background: rgba(34, 197, 94, 0.14);
+}
+
+.export-task-badge.error {
+  color: #f87171;
+  background: rgba(248, 113, 113, 0.14);
+}
+
+.export-task-badge.normal {
+  color: #facc15;
+  background: rgba(250, 204, 21, 0.14);
+}
+
+.export-task-badge.muted {
+  color: rgba(255, 255, 255, 0.65);
+  background: rgba(255, 255, 255, 0.08);
+}
+
 /* Action Buttons */
 .actions-cell {
   display: flex;
@@ -3427,8 +3831,22 @@ onUnmounted(() => {
   color: #ef4444;
 }
 
+.action-btn.export-download {
+  background: rgba(34, 197, 94, 0.18);
+  color: #4ade80;
+}
+
+.action-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 .action-btn:hover {
   transform: scale(1.1);
+}
+
+.action-btn:disabled:hover {
+  transform: none;
 }
 
 /* Memory Panel */
@@ -4111,34 +4529,53 @@ onUnmounted(() => {
 }
 
 .export-modal {
-  max-width: 560px;
-  max-height: none;
+  max-width: 860px;
+  max-height: min(88vh, 920px);
 }
 
 .export-modal .modal-header {
   justify-content: flex-start;
 }
 
-.export-progress,
+.export-task-modal-body,
 .export-ready {
   display: flex;
   flex-direction: column;
-  align-items: center;
   gap: 0.9rem;
   padding: 0.5rem 0 1rem;
 }
 
-.export-progress {
-  color: rgba(255, 255, 255, 0.8);
+.export-progress-card {
+  padding: 1rem;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
-.export-spinner {
-  width: 42px;
-  height: 42px;
-  border-radius: 50%;
-  border: 4px solid rgba(255, 255, 255, 0.12);
-  border-top-color: #ffd700;
-  animation: exportSpin 0.85s linear infinite;
+.export-user-progress-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  max-height: 340px;
+  overflow-y: auto;
+  padding-right: 0.25rem;
+}
+
+.export-user-progress-item {
+  padding: 0.8rem 0.9rem;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.export-paths {
+  margin-top: 0.9rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 0.82rem;
+  word-break: break-all;
 }
 
 .export-file {
@@ -4156,11 +4593,6 @@ onUnmounted(() => {
   color: #ffd700;
   text-decoration: underline;
   font-size: 0.92rem;
-}
-
-@keyframes exportSpin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
 }
 
 .mono-cell {

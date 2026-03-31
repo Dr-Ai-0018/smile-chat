@@ -1,19 +1,18 @@
 """
 管理路由 - 用户管理、邀请码管理、查看用户数据
 """
-from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import FileResponse
 from pathlib import Path
 from pydantic import BaseModel
 from typing import Any, Dict, List, Optional
 import os
 import secrets
 import json
-import io
 import re
 import zipfile
 import shutil
-from urllib.parse import quote
 from datetime import datetime, timezone, timedelta
 
 # 中国时区 UTC+8
@@ -33,6 +32,7 @@ from services.ai_service import AIService
 from services.prompt_manager import get_prompt_manager
 from services.chat_logger import get_chat_logger
 from services.session_state import get_session_state
+from services.export_service import get_export_service
 from services.weekly_survey_service import (
     retract_weekly_survey_notices_for_week,
     sync_weekly_survey_records_for_user,
@@ -50,6 +50,7 @@ ai_service = AIService()
 prompt_manager = get_prompt_manager()
 chat_logger = get_chat_logger()
 session_state = get_session_state()
+export_service = get_export_service()
 
 MEMORY_BASE_PATH = Path(__file__).parent.parent.parent / "memory" / "本体"
 MEMORY_BACKUP_BASE_PATH = Path(__file__).parent.parent.parent / "memory" / "备份" / "用户记忆"
@@ -872,6 +873,11 @@ class UserExportRequest(PydanticBaseModel):
     user_ids: List[int]
 
 
+class UserExportTaskRequest(PydanticBaseModel):
+    user_ids: List[int]
+    label: str = ""
+
+
 def _sanitize_export_name(value: str, fallback: str) -> str:
     text = (value or "").strip()
     if not text:
@@ -960,98 +966,93 @@ async def export_users_raw_data(
     }
 
 
+@router.post("/export-tasks")
+async def create_user_export_task(
+    req: UserExportTaskRequest,
+    admin_id: int = Depends(is_admin),
+):
+    """创建用户原始数据导出任务，后台异步执行。"""
+    try:
+        return export_service.create_task(
+            req.user_ids,
+            admin_id=admin_id,
+            requested_by="admin_ui",
+            label=req.label,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.get("/export-tasks")
+async def list_user_export_tasks(
+    limit: int = Query(default=20, ge=1, le=200),
+    admin_id: int = Depends(is_admin),
+):
+    """查看用户导出任务历史。"""
+    return {
+        "tasks": export_service.list_tasks(limit=limit),
+    }
+
+
+@router.get("/export-tasks/{task_id}")
+async def get_user_export_task(
+    task_id: str,
+    admin_id: int = Depends(is_admin),
+):
+    """查看单个导出任务详情与进度。"""
+    try:
+        return export_service.get_task(task_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="导出任务不存在")
+
+
+@router.get("/export-tasks/{task_id}/download")
+async def download_user_export_task(
+    task_id: str,
+    admin_id: int = Depends(is_admin),
+):
+    """下载已完成的导出 zip。"""
+    try:
+        archive_path = export_service.get_archive_path(task_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="导出文件不存在或任务未完成")
+
+    return FileResponse(
+        archive_path,
+        media_type="application/zip",
+        filename=archive_path.name,
+    )
+
+
 @router.post("/users/export-zip")
 async def export_users_zip(
     req: UserExportRequest,
     admin_id: int = Depends(is_admin),
 ):
-    """将选中用户的原始数据按目录结构打包为 zip"""
-    user_ids = []
-    seen = set()
-    for value in req.user_ids:
-        try:
-            user_id = int(value)
-        except Exception:
-            continue
-        if user_id <= 0 or user_id in seen:
-            continue
-        seen.add(user_id)
-        user_ids.append(user_id)
+    """兼容旧接口：同步生成落盘导出并直接返回 zip。"""
+    try:
+        task = await run_in_threadpool(
+            export_service.run_task_sync,
+            req.user_ids,
+            admin_id=admin_id,
+            requested_by="admin_legacy_api",
+            label="legacy_export_zip",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
-    if not user_ids:
-        raise HTTPException(status_code=400, detail="至少选择一位用户")
+    if task.get("status") != "completed":
+        raise HTTPException(status_code=500, detail=task.get("error_message") or "导出失败")
 
-    export_items = [_build_user_export_payload(user_id) for user_id in user_ids]
-    generated_at = get_china_now().isoformat()
-    filename = f"用户全量原始数据_{get_china_now().strftime('%Y-%m-%d_%H-%M-%S')}.zip"
-    ascii_filename = f"user_export_{get_china_now().strftime('%Y-%m-%d_%H-%M-%S')}.zip"
+    archive_path = Path(task["archive_path"])
+    if not archive_path.exists():
+        raise HTTPException(status_code=500, detail="导出文件不存在")
 
-    archive_buffer = io.BytesIO()
-    used_folder_names = set()
-
-    with zipfile.ZipFile(archive_buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as zip_file:
-        _zip_write_json(zip_file, "manifest.json", {
-            "generated_at": generated_at,
-            "user_count": len(export_items),
-            "user_ids": user_ids,
-        })
-
-        for item in export_items:
-            user = item.get("user") or {}
-            user_id = int(user.get("id"))
-            username = _sanitize_export_name(str(user.get("username") or ""), f"user_{user_id}")
-            folder_name = f"{username}_{user_id}"
-            if folder_name in used_folder_names:
-                folder_name = f"{folder_name}_{len(used_folder_names) + 1}"
-            used_folder_names.add(folder_name)
-
-            base = f"{folder_name}/"
-            _zip_write_json(zip_file, f"{base}user.json", item.get("user") or {})
-            _zip_write_json(zip_file, f"{base}metrics.json", item.get("metrics") or {})
-            _zip_write_json(zip_file, f"{base}experiment_state.json", item.get("experiment_state") or {})
-            _zip_write_json(zip_file, f"{base}checkins.json", item.get("checkins") or [])
-            _zip_write_json(zip_file, f"{base}request_logs.json", item.get("request_logs") or [])
-            _zip_write_json(zip_file, f"{base}prompt_events.json", item.get("prompt_events") or [])
-            _zip_write_json(zip_file, f"{base}prompt_states.json", item.get("prompt_states") or [])
-            _zip_write_json(zip_file, f"{base}notices.json", item.get("notices") or [])
-            _zip_write_json(zip_file, f"{base}notice_states.json", item.get("notice_states") or [])
-            _zip_write_json(zip_file, f"{base}weekly_surveys.json", item.get("weekly_surveys") or [])
-            _zip_write_json(zip_file, f"{base}chat_history.json", item.get("history") or [])
-
-            memory = item.get("memory") or {}
-            zip_file.writestr(f"{base}memory/long_term_memory.txt", memory.get("long_term") or "")
-            _zip_write_json(zip_file, f"{base}memory/json_memory.json", memory.get("json_memory") or {})
-
-            history_files = memory.get("history_files") or []
-            for index, history_file in enumerate(history_files, start=1):
-                raw_name = str((history_file or {}).get("filename") or f"history_{index}.txt")
-                safe_name = _sanitize_export_name(raw_name, f"history_{index}.txt")
-                if not safe_name.lower().endswith(".txt"):
-                    safe_name = f"{safe_name}.txt"
-                zip_file.writestr(
-                    f"{base}memory/history_files/{safe_name}",
-                    str((history_file or {}).get("content") or ""),
-                )
-
-            raw_logs = memory.get("raw_logs") or []
-            for index, raw_log in enumerate(raw_logs, start=1):
-                raw_name = str((raw_log or {}).get("filename") or f"log_{index}.json")
-                safe_name = _sanitize_export_name(raw_name, f"log_{index}.json")
-                if not safe_name.lower().endswith(".json"):
-                    safe_name = f"{safe_name}.json"
-                _zip_write_json(
-                    zip_file,
-                    f"{base}memory/raw_logs/{safe_name}",
-                    (raw_log or {}).get("content") or {},
-                )
-
-    archive_buffer.seek(0)
-    encoded_filename = quote(filename)
-    headers = {
-        "Content-Disposition": f"attachment; filename=\"{ascii_filename}\"; filename*=UTF-8''{encoded_filename}",
-        "X-Export-Filename": ascii_filename,
-    }
-    return StreamingResponse(archive_buffer, media_type="application/zip", headers=headers)
+    return FileResponse(
+        archive_path,
+        media_type="application/zip",
+        filename=archive_path.name,
+    )
 
 # ==================== 邀请码开关 ====================
 class InviteCodeToggleRequest(PydanticBaseModel):
