@@ -24,6 +24,7 @@ from services.response_parser import get_response_parser, ParsedResponse
 from services.session_state import get_session_state_service, SessionPreset
 from services.memory_service import get_memory_service
 from services.chat_logger import get_chat_logger
+from utils.image_data_url import normalize_image_data_url, parse_image_data_url
 
 class AIService:
     def __init__(self):
@@ -74,11 +75,7 @@ class AIService:
                         image_count += 1
                         img_url = ((part.get("image_url") or {}).get("url") or "")
                         if isinstance(img_url, str) and img_url.startswith("data:"):
-                            try:
-                                header, b64 = img_url.split(",", 1)
-                                mime = header[5:].split(";", 1)[0].strip() if header.startswith("data:") else "unknown"
-                            except Exception:
-                                mime, b64 = "unknown", ""
+                            mime, b64 = parse_image_data_url(img_url)
                             image_mimes.append(mime or "unknown")
                             image_b64_lens.append(len(b64 or ""))
                         else:
@@ -371,9 +368,10 @@ class AIService:
                 
                 # 添加图片
                 if image.startswith("data:"):
+                    image_url = normalize_image_data_url(image) or image
                     content_parts.append({
                         "type": "image_url",
-                        "image_url": {"url": image}
+                        "image_url": {"url": image_url}
                     })
                 else:
                     content_parts.append({
@@ -560,16 +558,7 @@ class AIService:
             return str(content)
 
         def _parse_data_url(url: str) -> Tuple[Optional[str], Optional[str]]:
-            if not isinstance(url, str) or not url.startswith("data:"):
-                return None, None
-            try:
-                header, b64 = url.split(",", 1)
-                mime = header[5:].split(";", 1)[0].strip() if header.startswith("data:") else ""
-                if not mime:
-                    mime = "application/octet-stream"
-                return mime, b64
-            except Exception:
-                return None, None
+            return parse_image_data_url(url)
 
         def _to_gemini_parts(content: Any) -> List[Dict[str, Any]]:
             if isinstance(content, str):
@@ -1312,9 +1301,10 @@ class AIService:
                 content_parts.append({"type": "text", "text": text_content})
                 
                 if image.startswith("data:"):
+                    image_url = normalize_image_data_url(image) or image
                     content_parts.append({
                         "type": "image_url",
-                        "image_url": {"url": image}
+                        "image_url": {"url": image_url}
                     })
                 else:
                     content_parts.append({

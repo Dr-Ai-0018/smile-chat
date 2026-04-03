@@ -14,6 +14,7 @@ from routers.user import get_current_user
 from models.schemas import ChatResponse
 from services.ai_service import AIService
 from storage import JsonStorage
+from utils.image_data_url import normalize_image_data_url
 
 # 中国时区 UTC+8
 CHINA_TZ = timezone(timedelta(hours=8))
@@ -146,17 +147,18 @@ async def send_message_with_context(
         raise HTTPException(status_code=400, detail="没有用户消息")
     
     last_user_msg = user_messages[-1]
+    normalized_image = normalize_image_data_url(last_user_msg.image)
     
     # 保存用户消息到JSON聊天历史
     storage.append_chat_message(
         user_id=user_id,
         role="user",
         content=last_user_msg.content or "",
-        image=last_user_msg.image,
+        image=normalized_image,
     )
     
     # 同时保存到Memory文件系统
-    save_message_to_history(user_id, "user", last_user_msg.content or "", last_user_msg.image)
+    save_message_to_history(user_id, "user", last_user_msg.content or "", normalized_image)
 
     # 收到用户消息时：记录时间、判断是否超时重置（不累加轮次，等AI成功回复后再+1）
     user_msg_time = get_china_now()
@@ -170,7 +172,7 @@ async def send_message_with_context(
         {
             "role": item.get("role"),
             "content": item.get("content", "") or "",
-            "image": item.get("image"),
+            "image": normalize_image_data_url(item.get("image")),
         }
         for item in storage.get_chat_history(user_id=user_id, limit=context_limit)
     ]
@@ -314,7 +316,12 @@ async def get_history(
 ):
     """获取聊天历史"""
     history = storage.get_chat_history(user_id=user_id, limit=limit)
-    return {"history": history}
+    normalized_history = []
+    for item in history:
+        current = dict(item)
+        current["image"] = normalize_image_data_url(current.get("image"))
+        normalized_history.append(current)
+    return {"history": normalized_history}
 
 # 保留旧的send接口兼容
 @router.post("/send", response_model=ChatResponse, response_model_exclude_none=True)

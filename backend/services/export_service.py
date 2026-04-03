@@ -9,7 +9,7 @@ import zipfile
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 from uuid import uuid4
 
 from services.chat_logger import get_chat_logger
@@ -131,6 +131,7 @@ class UserExportService:
         self.tasks_root.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
         self._live_tasks: Dict[str, Dict[str, Any]] = {}
+        self._progress_callbacks: Dict[str, Callable[[Dict[str, Any]], None]] = {}
 
     def normalize_user_ids(self, user_ids: List[int]) -> List[int]:
         normalized: List[int] = []
@@ -158,10 +159,13 @@ class UserExportService:
         admin_id: Optional[int] = None,
         requested_by: str = "admin",
         label: str = "",
+        progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
     ) -> Dict[str, Any]:
         task = self._prepare_task(user_ids, admin_id=admin_id, requested_by=requested_by, label=label)
         with self._lock:
             self._live_tasks[task["task_id"]] = task
+            if progress_callback is not None:
+                self._progress_callbacks[task["task_id"]] = progress_callback
             self._persist_task_unlocked(task)
         thread = threading.Thread(
             target=self._run_task,
@@ -179,10 +183,13 @@ class UserExportService:
         admin_id: Optional[int] = None,
         requested_by: str = "script",
         label: str = "",
+        progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
     ) -> Dict[str, Any]:
         task = self._prepare_task(user_ids, admin_id=admin_id, requested_by=requested_by, label=label)
         with self._lock:
             self._live_tasks[task["task_id"]] = task
+            if progress_callback is not None:
+                self._progress_callbacks[task["task_id"]] = progress_callback
             self._persist_task_unlocked(task)
         self._run_task(task["task_id"])
         return self.get_task(task["task_id"])
@@ -344,6 +351,9 @@ class UserExportService:
                 self._recompute_progress_unlocked(task)
                 self._touch_task_unlocked(task)
             traceback.print_exc()
+        finally:
+            with self._lock:
+                self._progress_callbacks.pop(task_id, None)
 
     def _write_package_manifest(self, task: Dict[str, Any]) -> None:
         manifest_path = Path(task["package_dir"]) / "manifest.json"
@@ -573,6 +583,12 @@ class UserExportService:
     def _touch_task_unlocked(self, task: Dict[str, Any]) -> None:
         task["updated_at"] = get_china_now().isoformat()
         self._persist_task_unlocked(task)
+        callback = self._progress_callbacks.get(task["task_id"])
+        if callback is not None:
+            try:
+                callback(self._decorate_task_snapshot(_clone_task_payload(task)))
+            except Exception:
+                pass
 
     def _persist_task_unlocked(self, task: Dict[str, Any]) -> None:
         task_dir = Path(task["task_dir"])
